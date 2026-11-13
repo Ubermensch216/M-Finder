@@ -11,14 +11,22 @@ which behaviour is evidenced, and the deliberate differences.
 * **Live updates** — NTFS USN change journal (resumes from the saved position); `ReadDirectoryChangesW` for folders and non-NTFS volumes.
 * **Instant search** — 30–60 ms over ~1M entries, cancelable while you type.
 * **Everything search syntax** — AND/OR/NOT/groups, wildcards, `regex:`, `case:`, `ww:`, `path:`, `ext:`, `size:`, `dm:`/`dc:`/`da:`, `parent:`, `empty:`, `content:` (file contents), macros (`pic:`, `doc:` …).
-* **Content preview** — the selected file's text appears in a pane under the list (View → Preview Pane, `F4`); `content:` terms are highlighted with ◀ ▶ to jump between hits. Works for text (UTF-8/UTF-16/ANSI auto-detected), **HWP / HWPX**, Word/Excel/PowerPoint (`.docx/.xlsx/.pptx`) and OpenDocument, using only the standard library (no IFilter or Office needed). `content:` searches also look *inside* those formats.
+* **File preview with the file's own formatting** — select a result and a pane shows it the way the file looks (View → Preview Pane → *Bottom / Right / Left*, `F4` to show/hide, Ctrl+wheel or `+`/`−` to zoom). `content:` hits are highlighted and ◀ ▶ jump between them. One viewer per format:
+  * **.hwp / .hwpx** — fonts, sizes, colours, bold/italic/underline, alignment, indents, tables (merged cells, fills, borders) and pictures
+  * **.docx** — styles, numbering/bullets, tables with merged cells, pictures, hyperlinks, highlights
+  * **.xlsx** — a spreadsheet grid: sheet tabs, column widths, merged cells, fills, fonts, borders and number/date formats
+  * **.pdf** — rendered pages (needs the optional `pymupdf` package; it is bundled in the exe)
+  * **.md** — headings, lists, task lists, quotes, tables, code blocks, links, local images
+  * **.txt** and anything else text-like — UTF-8/UTF-16/ANSI auto-detected
+  
+  `content:` searches also look *inside* HWP/HWPX/Word/Excel/PowerPoint/OpenDocument files and PDFs (no IFilter or Office needed). Floating shapes/text boxes in HWP are shown in reading order, not at their page position.
 * **Folder sizes**, computed in the background and searchable (`folder: size:>1gb`).
 * **GUI** — virtual list that stays fast with millions of results, sortable/resizable columns, **filters** (Audio/Picture/… + your own), **bookmarks**, several windows sharing one index, **dark/light theme**, **English/한국어** (add your own `locales/*.json`), tray icon, global hotkey, run in background / at startup.
 * **File lists** — index `.efu`/`.csv`/`.txt` lists as extra sources; export results as `.efu`/`.csv`/`.txt`.
 * **Servers** — read-only HTTP search page/JSON; ETP-style FTP server (browse, `SITE SEARCH`, optional downloads); per-user named-pipe IPC (used by `filefinder search`, and to reuse a running instance).
 * **Service** — optional privileged helper so the GUI can use the MFT/USN journal **without running as administrator**.
 
-Requires Windows and Python 3.10+ (standard library only; tested on 3.14).
+Requires Windows and Python 3.10+ (standard library only; tested on 3.14). PDF preview and PDF/picture handling use the optional `pymupdf` package (`pip install pymupdf`, or `pip install .[pdf]`); everything else works without it.
 
 ## Run
 
@@ -71,7 +79,7 @@ cat | dog  !draft            OR / NOT
 c:\users\*\desktop           a backslash switches to full-path matching
 ext:jpg;png size:1mb..10mb   functions
 dm:last2weeks  dc:2024-05  da:>2024-01-01
-content:"hello world" ext:txt   search inside files (UTF-8/UTF-16/ANSI)
+content:"hello world" ext:txt   search inside files (UTF-8/UTF-16/ANSI, HWP, DOCX, XLSX, PDF ...)
 regex:^IMG_\d{4}\.jpg$
 ```
 

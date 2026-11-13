@@ -305,19 +305,53 @@ class GuiSmoke(unittest.TestCase):
                 note = os.path.join(tree, "note_preview.txt")
                 with open(note, "w", encoding="utf-8") as f:
                     f.write("alpha beta\nneedle one\ngamma NEEDLE two\n")
+                sys.path.insert(0, os.path.dirname(__file__))
+                from fixtures import make_all
+
+                make_all(os.path.join(tree, "samples"))
                 ctl.rebuild()
                 app.var.set("content:needle note_preview")
                 self.assertTrue(self.pump(ctl, lambda: len(app.list.ids) == 1))
                 app.list.sel, app.list.cursor = {0}, 0
                 app.selection_changed()
                 pv = app.preview
-                self.assertTrue(self.pump(ctl, lambda: "needle one" in pv.text.get("1.0", "end")))
-                self.assertTrue(self.pump(ctl, lambda: len(pv.matches) == 2))
+                self.assertTrue(self.pump(ctl, lambda: pv.active is not None and "needle one" in pv.active.text.get("1.0", "end")))
+                self.assertTrue(self.pump(ctl, lambda: len(pv.active.hits) == 2))
                 self.assertEqual(pv.lbl_hits.cget("text"), "1 / 2")
                 pv.step(1)
                 self.assertEqual(pv.lbl_hits.cget("text"), "2 / 2")
+                # View > Preview Pane > Bottom / Right / Left re-lays out the split
+                for pos in ("right", "left", "bottom"):
+                    app.v_ppos.set(pos)
+                    app.set_preview_pos()
+                    ctl.root.update()
+                    panes = [str(p) for p in app.paned.panes()]
+                    self.assertEqual(len(panes), 2)
+                    self.assertEqual(str(app.paned.cget("orient")), "vertical" if pos == "bottom" else "horizontal")
+                    self.assertEqual(panes[0] == str(app.preview), pos == "left")
+                    self.assertEqual(ctl.settings.preview_pos, pos)
+                # every supported format gets its own viewer
+                kinds = [("sample.docx", "RichView"), ("sample.hwp", "RichView"), ("sample.hwpx", "RichView"),
+                         ("sample.md", "RichView"), ("sample.xlsx", "SheetView"), ("sample.txt", "TextView")]
+                from filefinder import viewers
+
+                if viewers.HAVE_PDF:
+                    kinds.append(("sample.pdf", "PdfView"))
+                for name, kind in kinds:
+                    app.var.set("content:needle ext:" + name.rsplit(".", 1)[1] + " sample")  # ext is unique per sample
+                    self.assertTrue(self.pump(ctl, lambda: len(app.list.ids) == 1), name)
+                    self.pump(ctl, lambda: False, 1.5)  # let background index updates re-run the search first
+                    self.assertEqual(len(app.list.ids), 1, name)
+                    app.list.sel, app.list.cursor = {0}, 0
+                    app.selection_changed()
+                    ok = self.pump(ctl, lambda: type(pv.active).__name__ == kind and name in pv.lbl.cget("text")
+                                   and "[" in pv.lbl.cget("text"))
+                    self.assertTrue(ok, (name, type(pv.active).__name__, pv.lbl.cget("text"), pv.msg.cget("text"), pv.path))
+                    want = "1 / 2" if name == "sample.hwp" else "1 / 1"  # the HWP sample has a hit in a cell and in the body
+                    self.assertTrue(self.pump(ctl, lambda: pv.lbl_hits.cget("text") == want, 8), (name, pv.lbl_hits.cget("text")))
                 app.toggle_preview_key()
                 self.assertFalse(ctl.settings.show_preview)
+                self.assertEqual(len(app.paned.panes()), 1)
                 app.toggle_preview_key()
                 self.assertTrue(ctl.settings.show_preview)
                 app.var.set("cat")

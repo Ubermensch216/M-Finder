@@ -26,6 +26,10 @@ sys.path.insert(0, ROOT)
 from filefinder import __version__  # noqa: E402
 from filefinder.tray import make_icon_png  # noqa: E402
 
+# Installed in many Python environments, never used by FileFinder; PyInstaller would otherwise bundle them.
+HEAVY = ["numpy", "scipy", "pandas", "llvmlite", "numba", "PIL", "cryptography", "lxml", "matplotlib", "IPython",
+         "sympy", "cv2", "torch", "tensorflow", "uharfbuzz", "pytest", "jedi", "docutils", "sphinx"]
+
 BUILD = os.path.join(ROOT, "build")
 DIST = os.path.join(ROOT, "dist")
 
@@ -73,7 +77,8 @@ def run_pyinstaller(mode: str, icon: str, version: str) -> None:
         "--distpath", DIST, "--workpath", os.path.join(BUILD, mode), "--specpath", os.path.join(BUILD, mode),
         "--paths", ROOT,
         "--exclude-module", "unittest", "--exclude-module", "pydoc", "--exclude-module", "setuptools",
-        "--exclude-module", "pip", "--exclude-module", "distutils", "--exclude-module", "test",
+        "--exclude-module", "pip", "--exclude-module", "test",  # distutils must stay: pymupdf imports it
+        *[a for m in HEAVY for a in ("--exclude-module", m)],
         os.path.join(ROOT, "packaging", "entry.py"),
     ]
     print("+", " ".join(cmd))

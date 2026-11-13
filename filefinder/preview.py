@@ -152,7 +152,7 @@ _ZIP_KINDS = {
 }
 
 
-STRUCTURED_EXTS = frozenset(_ZIP_KINDS) | {".hwp"}
+STRUCTURED_EXTS = frozenset(_ZIP_KINDS) | {".hwp", ".pdf"}
 
 
 # ---- HWP 5 (OLE compound file) --------------------------------------------------------
@@ -352,6 +352,26 @@ def _hwp(path: str) -> Preview:
     return p
 
 
+def _pdf(path: str) -> Preview:
+    try:
+        import pymupdf  # type: ignore
+    except Exception:
+        return Preview(kind="PDF", error="unreadable")
+    parts, total = [], 0
+    with pymupdf.open(path) as doc:
+        if doc.needs_pass:
+            return Preview(kind="PDF", error="encrypted")
+        for page in doc:
+            t = page.get_text()
+            parts.append(t)
+            total += len(t)
+            if total > MAX_CHARS:
+                break
+    p = _clip("\n".join(parts))
+    p.kind = "PDF"
+    return p
+
+
 # ---- entry point -------------------------------------------------------------------------
 
 
@@ -370,6 +390,11 @@ def load(path: str) -> Preview:
                 return p
             except (zipfile.BadZipFile, KeyError, ValueError):
                 return _plain(path)
+        if ext == ".pdf":
+            try:
+                return _pdf(path)
+            except Exception:
+                return Preview(kind="PDF", error="unreadable")
         if ext == ".hwp":
             try:
                 return _hwp(path)

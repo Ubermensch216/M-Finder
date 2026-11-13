@@ -57,7 +57,9 @@ class Settings:
     show_status_bar: bool = True
     show_folder_sizes: bool = True
     show_preview: bool = True
-    preview_height: int = 220
+    preview_pos: str = "bottom"  # bottom | right | left
+    preview_height: int = 260
+    preview_width: int = 480
     geometry: str = "900x600"
     column_widths: dict = field(default_factory=lambda: {"name": 280, "path": 380, "size": 90, "mtime": 140})
     # background / shell integration

@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import os
-import bisect
 import queue
-import re
 import subprocess
 import sys
 import threading
@@ -14,7 +12,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from tkinter import font as tkfont
 
-from . import __version__, filelist, i18n, preview, query, theme, winshell
+from . import __version__, filelist, i18n, query, theme, winshell
 from .engine import Engine, is_admin
 from .etp import EtpService
 from .fmt import format_size, format_time
@@ -22,6 +20,7 @@ from .gui_dialogs import OptionsDialog, ask_text, organize_bookmarks, organize_f
 from .httpserver import HttpService
 from .i18n import _
 from .index import FILE_ATTRIBUTE_DIRECTORY
+from .preview_pane import PreviewPane
 from .settings import Settings, app_dir
 from .theme import COLORS
 
@@ -350,158 +349,6 @@ class VirtualList(tk.Frame):
         self._resize = None
 
 
-class PreviewPane(tk.Frame):
-    """Shows the text of the selected file; matches of the ``content:`` terms are highlighted."""
-
-    def __init__(self, master, app: "SearchWindow") -> None:
-        super().__init__(master, bg=COLORS["window"])
-        self.app = app
-        self.seq = 0
-        self.q: queue.Queue = queue.Queue()
-        self.path = ""
-        self.matches: list[str] = []
-        self.cur = -1
-        bar = tk.Frame(self, bg=COLORS["header_bg"])
-        bar.pack(fill="x")
-        self.lbl = tk.Label(bar, text="", anchor="w", bg=COLORS["header_bg"], fg=COLORS["fg"])
-        self.lbl.pack(side="left", fill="x", expand=True, padx=6)
-        ttk.Button(bar, text="\u25b6", width=3, command=lambda: self.step(1)).pack(side="right", padx=1, pady=1)
-        ttk.Button(bar, text="\u25c0", width=3, command=lambda: self.step(-1)).pack(side="right", padx=1, pady=1)
-        self.lbl_hits = tk.Label(bar, text="", bg=COLORS["header_bg"], fg=COLORS["dim"])
-        self.lbl_hits.pack(side="right", padx=6)
-        body = tk.Frame(self)
-        body.pack(fill="both", expand=True)
-        size = app.ctl.settings.font_size
-        self.text = tk.Text(
-            body, wrap="word", state="disabled", relief="flat", borderwidth=0, undo=False,
-            bg=COLORS["bg"], fg=COLORS["fg"], insertbackground=COLORS["fg"], font=("Consolas", size),
-            selectbackground=COLORS["sel"], selectforeground=COLORS["fg"], inactiveselectbackground=COLORS["sel_inactive"],
-        )
-        sb = ttk.Scrollbar(body, orient="vertical", command=self.text.yview)
-        self.text.configure(yscrollcommand=sb.set)
-        self.text.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
-        self.text.tag_configure("hit", background="#ffe066", foreground="#000000")
-        self.text.tag_configure("cur", background="#ff9632", foreground="#000000")
-        self.text.tag_configure("note", foreground=COLORS["dim"])
-        self.text.bind("<Control-a>", lambda e: (self.text.tag_add("sel", "1.0", "end"), "break")[1])
-        self.text.bind("<Button-1>", lambda e: self.text.focus_set())
-
-    def set_font_size(self, size: int) -> None:
-        self.text.configure(font=("Consolas", size))
-
-    def _show(self, text: str, note: bool = False) -> None:
-        t = self.text
-        t.configure(state="normal")
-        t.delete("1.0", "end")
-        t.insert("1.0", text, "note" if note else "")
-        t.configure(state="disabled")
-
-    def clear(self, msg: str = "") -> None:
-        self.seq += 1
-        self.path = ""
-        self.matches, self.cur = [], -1
-        self.lbl.configure(text="")
-        self.lbl_hits.configure(text="")
-        self._show(msg, note=True)
-
-    def show_file(self, path: str) -> None:
-        """Load ``path`` in a worker thread (large or odd files must not freeze the UI)."""
-        if path == self.path:
-            return
-        self.seq += 1
-        seq = self.seq
-        self.path = path
-        self.lbl.configure(text=os.path.basename(path))
-        self.lbl_hits.configure(text="")
-        self._show(_("Loading..."), note=True)
-
-        def work() -> None:
-            self.q.put((seq, path, preview.load(path)))
-
-        threading.Thread(target=work, daemon=True).start()
-        self.after(50, self._poll)
-
-    def _poll(self) -> None:
-        try:
-            while True:
-                seq, path, pv = self.q.get_nowait()
-                if seq == self.seq:
-                    self._display(path, pv)
-                    return
-        except queue.Empty:
-            if self.path and not self.matches and self.lbl_hits.cget("text") == "" and self.text.get("1.0", "1.10") == _("Loading..."):
-                self.after(50, self._poll)
-
-    def _display(self, path: str, pv: "preview.Preview") -> None:
-        if pv.error:
-            msgs = {
-                "binary": _("This file has no text to preview (binary file)."),
-                "folder": _("Folders have no preview."),
-                "encrypted": _("This document is encrypted; its text cannot be previewed."),
-                "unreadable": _("This file could not be read."),
-            }
-            self.lbl.configure(text=os.path.basename(path) + (f"  [{pv.kind}]" if pv.kind else ""))
-            self.matches, self.cur = [], -1
-            self.lbl_hits.configure(text="")
-            self._show(msgs.get(pv.error, pv.error), note=True)
-            return
-        self.lbl.configure(text=f"{os.path.basename(path)}  [{pv.kind}]")
-        empty = not pv.text.strip()
-        self._show(_("(no text content)") if empty else pv.text, note=empty)
-        if pv.truncated:
-            self.text.configure(state="normal")
-            self.text.insert("end", "\n\n" + _("... (preview truncated)"), "note")
-            self.text.configure(state="disabled")
-        self.highlight()
-
-    def highlight(self) -> None:
-        t = self.text
-        t.tag_remove("hit", "1.0", "end")
-        t.tag_remove("cur", "1.0", "end")
-        self.matches, self.cur = [], -1
-        terms = preview.search_terms(self.app.var.get())
-        if terms and self.path:
-            fl = self.app.flags()
-            alts = [x if fl.regex else re.escape(x) for x in terms]
-            try:
-                rx = re.compile("|".join(f"(?:{a})" for a in alts), 0 if fl.case else re.IGNORECASE)
-            except re.error:
-                rx = None
-            if rx is not None:
-                content = t.get("1.0", "end-1c")
-                starts = [0] + [m.end() for m in re.finditer("\n", content)]
-                for m in rx.finditer(content):
-                    a, b = m.start(), m.end()
-                    if a == b:
-                        continue
-                    la = bisect.bisect_right(starts, a) - 1
-                    lb = bisect.bisect_right(starts, b) - 1
-                    i1, i2 = f"{la + 1}.{a - starts[la]}", f"{lb + 1}.{b - starts[lb]}"
-                    t.tag_add("hit", i1, i2)
-                    self.matches.append(i1)
-                    if len(self.matches) >= 20000:
-                        break
-        if self.matches:
-            self.step(1)
-        else:
-            self.lbl_hits.configure(text=_("No matches") if terms and self.path else "")
-            t.yview_moveto(0)
-
-    def step(self, d: int) -> None:
-        if not self.matches:
-            return
-        t = self.text
-        t.tag_remove("cur", "1.0", "end")
-        self.cur = (self.cur + d) % len(self.matches)
-        i1 = self.matches[self.cur]
-        rng = t.tag_nextrange("hit", i1)
-        if rng:
-            t.tag_add("cur", *rng)
-        t.see(i1)
-        self.lbl_hits.configure(text=f"{self.cur + 1:,} / {len(self.matches):,}")
-
-
 class SearchWindow(tk.Toplevel):
     def __init__(self, ctl: "Controller", query_text: str = "") -> None:
         super().__init__(ctl.root)
@@ -530,6 +377,7 @@ class SearchWindow(tk.Toplevel):
         self.v_regex = tk.BooleanVar(value=s.regex)
         self.v_status = tk.BooleanVar(value=s.show_status_bar)
         self.v_preview = tk.BooleanVar(value=s.show_preview)
+        self.v_ppos = tk.StringVar(value=s.preview_pos if s.preview_pos in ("bottom", "right", "left") else "bottom")
         self._preview_after = None
         self.var = tk.StringVar(value=query_text)
 
@@ -545,9 +393,7 @@ class SearchWindow(tk.Toplevel):
         self.paned.pack(fill="both", expand=True)
         self.list = VirtualList(self.paned, self)
         self.preview = PreviewPane(self.paned, self)
-        self.paned.add(self.list, minsize=80, stretch="always")
-        if s.show_preview:
-            self.paned.add(self.preview, minsize=60, height=s.preview_height, stretch="never")
+        self.layout_preview()
         self.statusbar = ttk.Frame(self)
         self.lbl_left = ttk.Label(self.statusbar, text="")
         self.lbl_right = ttk.Label(self.statusbar, text="")
@@ -811,24 +657,65 @@ class SearchWindow(tk.Toplevel):
         self.toggle_preview()
 
     def toggle_preview(self) -> None:
-        on = self.v_preview.get()
-        self.ctl.settings.show_preview = on
-        if on:
-            self.paned.add(self.preview, minsize=60, height=max(60, self.ctl.settings.preview_height), stretch="never")
+        self._remember_preview_size()
+        self.ctl.settings.show_preview = self.v_preview.get()
+        self.layout_preview()
+        if self.v_preview.get():
             self.preview.path = ""
             self._update_preview()
-        else:
-            self._remember_preview_height()
-            self.paned.forget(self.preview)
 
-    def _remember_preview_height(self) -> None:
+    def set_preview_pos(self) -> None:
+        """View > Preview Pane > Bottom / Right / Left."""
+        self._remember_preview_size()
+        s = self.ctl.settings
+        s.preview_pos = self.v_ppos.get()
+        s.show_preview = True
+        self.v_preview.set(True)
+        self.layout_preview()
+        self.preview.path = ""
+        self._update_preview()
+
+    def _preview_shown(self) -> bool:
+        return str(self.preview) in [str(p) for p in self.paned.panes()]
+
+    def _remember_preview_size(self) -> None:
         try:
-            if str(self.preview) in self.paned.panes() or self.preview in self.paned.panes():
+            if not self._preview_shown():
+                return
+            s = self.ctl.settings
+            if str(self.paned.cget("orient")) == "horizontal":
+                w = self.preview.winfo_width()
+                if w > 100:
+                    s.preview_width = w
+            else:
                 h = self.preview.winfo_height()
                 if h > 60:
-                    self.ctl.settings.preview_height = h
+                    s.preview_height = h
         except tk.TclError:
             pass
+
+    def layout_preview(self) -> None:
+        """(Re)build the split between the result list and the preview pane."""
+        s = self.ctl.settings
+        for w in (self.list, self.preview):
+            try:
+                self.paned.forget(w)
+            except tk.TclError:
+                pass
+        pos = self.v_ppos.get()
+        side = pos in ("left", "right")
+        self.paned.configure(orient="horizontal" if side else "vertical")
+        if not s.show_preview:
+            self.paned.add(self.list, minsize=80, stretch="always")
+            return
+        size = {"width": max(160, s.preview_width)} if side else {"height": max(80, s.preview_height)}
+        pane_kw = dict(minsize=150 if side else 60, stretch="never", **size)
+        if pos == "left":
+            self.paned.add(self.preview, **pane_kw)
+            self.paned.add(self.list, minsize=120, stretch="always")
+        else:
+            self.paned.add(self.list, minsize=120 if side else 80, stretch="always")
+            self.paned.add(self.preview, **pane_kw)
 
     def open_selected(self) -> None:
         paths = self._paths()
@@ -861,8 +748,11 @@ class SearchWindow(tk.Toplevel):
         self._clip("\r\n".join(idx.parent_path(i) for i in self.list.selected_ids()))
 
     def _copy_shortcut(self) -> None:
-        if self.focus_get() is self.entry:
+        f = self.focus_get()
+        if f is self.entry:
             self.entry.event_generate("<<Copy>>")
+        elif f is not None and str(f).startswith(str(self.preview)) and isinstance(f, tk.Text) and f.tag_ranges("sel"):
+            f.event_generate("<<Copy>>")  # copy the text selected in the preview
         else:
             self.copy_full_path()
 
@@ -939,7 +829,12 @@ class SearchWindow(tk.Toplevel):
 
         v = tk.Menu(mb, tearoff=0)
         v.add_checkbutton(label=_("Status Bar"), variable=self.v_status, command=self.toggle_status)
-        v.add_checkbutton(label=_("Preview Pane"), variable=self.v_preview, command=self.toggle_preview, accelerator="F4")
+        pm = tk.Menu(v, tearoff=0)
+        pm.add_checkbutton(label=_("Show Preview Pane"), variable=self.v_preview, command=self.toggle_preview, accelerator="F4")
+        pm.add_separator()
+        for value, title in (("bottom", "Bottom"), ("right", "Right"), ("left", "Left")):
+            pm.add_radiobutton(label=_(title), variable=self.v_ppos, value=value, command=self.set_preview_pos)
+        v.add_cascade(label=_("Preview Pane"), menu=pm)
         v.add_separator()
         v.add_command(label=_("Zoom In"), command=lambda: self.zoom(1), accelerator="Ctrl++")
         v.add_command(label=_("Zoom Out"), command=lambda: self.zoom(-1), accelerator="Ctrl+-")
@@ -1023,7 +918,7 @@ class SearchWindow(tk.Toplevel):
         OptionsDialog(self)
 
     def on_close(self) -> None:
-        self._remember_preview_height()
+        self._remember_preview_size()
         self.ctl.close_window(self)
 
 
