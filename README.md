@@ -1,0 +1,99 @@
+# FileFinder
+
+Instant file-name search for Windows, functionally modelled on
+[Everything](https://www.voidtools.com/) 1.5. See [docs/ANALYSIS.md](docs/ANALYSIS.md)
+for how Everything was analysed (with [REA](https://github.com/morluto/rea)),
+which behaviour is evidenced, and the deliberate differences.
+
+## Features
+
+* **Fast indexing** — reads the NTFS Master File Table (~800k–950k entries in 4–14 s) and parses `$MFT` directly for size and dates (800k entries in ~15 s, exact match with `stat`).
+* **Live updates** — NTFS USN change journal (resumes from the saved position); `ReadDirectoryChangesW` for folders and non-NTFS volumes.
+* **Instant search** — 30–60 ms over ~1M entries, cancelable while you type.
+* **Everything search syntax** — AND/OR/NOT/groups, wildcards, `regex:`, `case:`, `ww:`, `path:`, `ext:`, `size:`, `dm:`/`dc:`/`da:`, `parent:`, `empty:`, `content:` (file contents), macros (`pic:`, `doc:` …).
+* **Content preview** — the selected file's text appears in a pane under the list (View → Preview Pane, `F4`); `content:` terms are highlighted with ◀ ▶ to jump between hits. Works for text (UTF-8/UTF-16/ANSI auto-detected), **HWP / HWPX**, Word/Excel/PowerPoint (`.docx/.xlsx/.pptx`) and OpenDocument, using only the standard library (no IFilter or Office needed). `content:` searches also look *inside* those formats.
+* **Folder sizes**, computed in the background and searchable (`folder: size:>1gb`).
+* **GUI** — virtual list that stays fast with millions of results, sortable/resizable columns, **filters** (Audio/Picture/… + your own), **bookmarks**, several windows sharing one index, **dark/light theme**, **English/한국어** (add your own `locales/*.json`), tray icon, global hotkey, run in background / at startup.
+* **File lists** — index `.efu`/`.csv`/`.txt` lists as extra sources; export results as `.efu`/`.csv`/`.txt`.
+* **Servers** — read-only HTTP search page/JSON; ETP-style FTP server (browse, `SITE SEARCH`, optional downloads); per-user named-pipe IPC (used by `filefinder search`, and to reuse a running instance).
+* **Service** — optional privileged helper so the GUI can use the MFT/USN journal **without running as administrator**.
+
+Requires Windows and Python 3.10+ (standard library only; tested on 3.14).
+
+## Run
+
+```powershell
+python -m filefinder                          # GUI
+python -m filefinder "ext:py size:>50kb"      # GUI pre-filled (reuses a running instance)
+python -m filefinder search -l -n 20 "report ext:docx;pdf dm:thisyear"
+python -m filefinder search -f Picture --export pics.efu "holiday"
+python -m filefinder search "content:TODO ext:py"
+python -m filefinder index                    # rebuild the database
+python -m filefinder serve --port 8080        # HTTP
+python -m filefinder etp --allow-download --user me --password secret
+```
+
+`search` asks a running FileFinder over IPC first (live results), otherwise loads
+the database. Settings and the database live in `%APPDATA%\FileFinder\`.
+
+### MFT access: administrator or the service
+
+Windows only lets administrators open a raw volume. Options:
+
+1. **Run elevated** (Tools → *Restart as Administrator* in the GUI) — MFT indexing and live USN updates work immediately.
+2. **Install the service** (elevated prompt, once): `python -m filefinder service install`, then use the GUI as a normal user. `install` refuses unless Python and this folder are under *Program Files* (a SYSTEM service must not run user-writable code); `--unsafe-allow-user-paths` overrides that and is a privilege-escalation risk. The service serves only names/metadata of fixed local NTFS drives, only to your SID (`--allow-sid` to add others). Test without installing: `python -m filefinder service run-console` in an elevated shell.
+3. **Neither** — falls back to walking folders (works everywhere; live updates via change notifications).
+
+## Executables
+
+`python packaging/build_exe.py` (needs `pip install pyinstaller`) writes to `dist/`:
+
+| File | Use |
+|---|---|
+| `FileFinder.exe` | single portable file (~12 MB), no Python needed. Unpacks to a temp folder at start (~1–2 s). |
+| `FileFinder/` + `FileFinder-0.1.0.zip` | folder build: faster start; the one to install under `C:\Program Files\FileFinder` if you want the service. |
+| `SHA256SUMS.txt` | checksums |
+
+The exe is a windowed program: double-click for the GUI; from a terminal the CLI works the same
+(`FileFinder.exe search "ext:pdf"`, `FileFinder.exe service status`) and prints to that terminal.
+The exes are **unsigned**, so Windows SmartScreen / some antivirus products may warn about them
+(common for PyInstaller programs); sign them with your own certificate for wide distribution.
+For the service: copy the folder build to Program Files, then run `FileFinder.exe service install` from an elevated prompt.
+
+## Search syntax
+
+See *Help → Search Syntax* in the app, or [`query.py`](filefinder/query.py):
+
+```
+report final                 both words in the name
+cat | dog  !draft            OR / NOT
+"my file"  *.txt  img_??.png wildcards match the whole name
+c:\users\*\desktop           a backslash switches to full-path matching
+ext:jpg;png size:1mb..10mb   functions
+dm:last2weeks  dc:2024-05  da:>2024-01-01
+content:"hello world" ext:txt   search inside files (UTF-8/UTF-16/ANSI)
+regex:^IMG_\d{4}\.jpg$
+```
+
+Shortcuts: Ctrl+I case, Ctrl+B whole word, Ctrl+U path, Ctrl+R regex, Ctrl+P options, F5 rebuild,
+Ctrl+N new window, Ctrl+D bookmark, Ctrl+Shift+C copy full path, Ctrl +/-/0 zoom, Del recycle.
+
+## Security notes
+
+* HTTP and FTP servers are **off by default** and bind `127.0.0.1`. They send credentials in clear text — set a password before binding to a network address. HTTP never serves file contents; FTP serves them only with *Allow downloads*, only for paths in the index, and refuses links that leave the indexed folder.
+* The IPC pipe is named after your SID and its ACL grants only you; remote clients are rejected.
+* "Run at startup" writes a per-user `Run` registry value (nothing is installed system-wide unless you install the service).
+
+## Tests
+
+```powershell
+python -m unittest discover -s tests                         # 40+ tests
+$env:FF_GUI_TEST = 1; python -m unittest discover -s tests   # + Tk GUI smoke test
+```
+An elevated shell additionally runs a check that `$MFT`-parsed sizes/dates equal `os.stat`.
+
+## Limitations
+
+See [docs/ANALYSIS.md](docs/ANALYSIS.md#deliberate-differences--remaining-gaps): not
+SDK-compatible with Everything, the service install path is untested on a real SCM,
+no GUI ETP client, no installer.
