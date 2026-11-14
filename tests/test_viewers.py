@@ -8,11 +8,11 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import fixtures
 
-from filefinder import preview, query, viewers
-from filefinder.index import Index
-from filefinder.scanner import scan_folder
-from filefinder.viewers import docx, hwp, hwpx, markdown, rhwp, xlsx
-from filefinder.viewers import model as M
+from mfinder import preview, query, viewers
+from mfinder.index import Index
+from mfinder.scanner import scan_folder
+from mfinder.viewers import docx, hwp, hwpx, markdown, rhwp, xlsx
+from mfinder.viewers import model as M
 
 
 def paras(doc):
@@ -206,7 +206,7 @@ class LoaderTests(Samples):
 
 class ImageTests(unittest.TestCase):
     def test_png_and_broken(self):
-        from filefinder.viewers import image
+        from mfinder.viewers import image
 
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "a.png")

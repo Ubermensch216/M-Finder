@@ -1,11 +1,11 @@
 """Build distributable executables with PyInstaller.
 
     python packaging/build_exe.py            # onefile + onedir
-    python packaging/build_exe.py --onefile  # only dist/FileFinder.exe
-    python packaging/build_exe.py --onedir   # only dist/FileFinder/ (+ zip)
+    python packaging/build_exe.py --onefile  # only dist/M-Finder.exe
+    python packaging/build_exe.py --onedir   # only dist/M-Finder/ (+ zip)
 
-Output: dist/FileFinder.exe (single file, portable), dist/FileFinder/ (folder; use this one
-for the Windows service, which must live under Program Files) and dist/FileFinder-<ver>.zip.
+Output: dist/M-Finder.exe (single file, portable), dist/M-Finder/ (folder; use this one
+for the Windows service, which must live under Program Files) and dist/M-Finder-<ver>.zip.
 Requires:  pip install pyinstaller
 """
 
@@ -23,10 +23,10 @@ import zipfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from filefinder import __version__  # noqa: E402
-from filefinder.tray import make_icon_png  # noqa: E402
+from mfinder import __version__  # noqa: E402
+from mfinder.tray import make_icon_png  # noqa: E402
 
-# Installed in many Python environments, never used by FileFinder; PyInstaller would otherwise bundle them.
+# Installed in many Python environments, never used by M-Finder; PyInstaller would otherwise bundle them.
 HEAVY = ["numpy", "scipy", "pandas", "llvmlite", "numba", "PIL", "cryptography", "lxml", "matplotlib", "IPython",
          "sympy", "cv2", "torch", "tensorflow", "uharfbuzz", "pytest", "jedi", "docutils", "sphinx"]
 
@@ -54,12 +54,12 @@ def write_version_file(path: str) -> None:
   ffi=FixedFileInfo(filevers={v}, prodvers={v}, mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
   kids=[
     StringFileInfo([StringTable("040904B0", [
-      StringStruct("CompanyName", "FileFinder"),
-      StringStruct("FileDescription", "FileFinder - instant file name search"),
+      StringStruct("CompanyName", "M-Finder"),
+      StringStruct("FileDescription", "M-Finder - instant file name search"),
       StringStruct("FileVersion", "{__version__}"),
-      StringStruct("InternalName", "FileFinder"),
-      StringStruct("OriginalFilename", "FileFinder.exe"),
-      StringStruct("ProductName", "FileFinder"),
+      StringStruct("InternalName", "M-Finder"),
+      StringStruct("OriginalFilename", "M-Finder.exe"),
+      StringStruct("ProductName", "M-Finder"),
       StringStruct("ProductVersion", "{__version__}")])]),
     VarFileInfo([VarStruct("Translation", [1033, 1200])])
   ])
@@ -72,8 +72,8 @@ def run_pyinstaller(mode: str, icon: str, version: str) -> None:
     sep = ";" if os.name == "nt" else ":"
     cmd = [
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--noconsole", f"--{mode}",
-        "--name", "FileFinder", "--icon", icon, "--version-file", version,
-        "--add-data", f"{os.path.join(ROOT, 'filefinder', 'locales')}{sep}filefinder/locales",
+        "--name", "M-Finder", "--icon", icon, "--version-file", version,
+        "--add-data", f"{os.path.join(ROOT, 'mfinder', 'locales')}{sep}mfinder/locales",
         "--distpath", DIST, "--workpath", os.path.join(BUILD, mode), "--specpath", os.path.join(BUILD, mode),
         "--paths", ROOT,
         "--exclude-module", "unittest", "--exclude-module", "pydoc", "--exclude-module", "setuptools",
@@ -100,22 +100,22 @@ def main() -> int:
     args = ap.parse_args()
     modes = [m for m, on in (("onefile", args.onefile), ("onedir", args.onedir)) if on] or ["onefile", "onedir"]
     os.makedirs(BUILD, exist_ok=True)
-    icon, version = os.path.join(BUILD, "filefinder.ico"), os.path.join(BUILD, "version_info.txt")
+    icon, version = os.path.join(BUILD, "mfinder.ico"), os.path.join(BUILD, "version_info.txt")
     write_icon(icon)
     write_version_file(version)
-    # onedir first: both write dist/FileFinder*, onefile creates the file, onedir the folder
+    # onedir first: both write dist/M-Finder*, onefile creates the file, onedir the folder
     for mode in sorted(modes, reverse=True):
         run_pyinstaller(mode, icon, version)
     lines = []
-    exe = os.path.join(DIST, "FileFinder.exe")
-    folder = os.path.join(DIST, "FileFinder")
+    exe = os.path.join(DIST, "M-Finder.exe")
+    folder = os.path.join(DIST, "M-Finder")
     if "onedir" in modes:
-        zpath = os.path.join(DIST, f"FileFinder-{__version__}.zip")
+        zpath = os.path.join(DIST, f"M-Finder-{__version__}.zip")
         with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
             for dp, _, fns in os.walk(folder):
                 for fn in fns:
                     full = os.path.join(dp, fn)
-                    z.write(full, os.path.join("FileFinder", os.path.relpath(full, folder)))
+                    z.write(full, os.path.join("M-Finder", os.path.relpath(full, folder)))
         lines.append((zpath, sha256(zpath)))
     if "onefile" in modes and os.path.isfile(exe):
         lines.append((exe, sha256(exe)))

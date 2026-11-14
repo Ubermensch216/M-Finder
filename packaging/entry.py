@@ -1,7 +1,7 @@
 """PyInstaller entry point."""
 import sys
 
-from filefinder.cli import main
+from mfinder.cli import main
 
 if __name__ == "__main__":
     sys.exit(main())

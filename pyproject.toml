@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "filefinder"
+name = "m-finder"
 version = "0.1.0"
 description = "Everything-style instant file search for Windows (NTFS MFT + USN journal)"
 readme = "README.md"
@@ -14,13 +14,13 @@ dependencies = []
 pdf = ["pymupdf>=1.24"]  # PDF preview, content: search in PDFs, picture scaling
 
 [project.scripts]
-filefinder = "filefinder.cli:main"
+mfinder = "mfinder.cli:main"
 
 [project.gui-scripts]
-filefinder-gui = "filefinder.cli:main"
+mfinder-gui = "mfinder.cli:main"
 
 [tool.setuptools]
-packages = ["filefinder", "filefinder.viewers"]
+packages = ["mfinder", "mfinder.viewers"]
 
 [tool.setuptools.package-data]
-filefinder = ["locales/*.json"]
+mfinder = ["locales/*.json"]

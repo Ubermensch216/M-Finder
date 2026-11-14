@@ -69,7 +69,7 @@ assets were copied.
 
 ## Mapping to this implementation
 
-| Everything feature | FileFinder module |
+| Everything feature | M-Finder module |
 |---|---|
 | MFT enumeration (`FSCTL_ENUM_USN_DATA`) | `ntfs.index_volume` |
 | Size / dates straight from `$MFT` | `mftparse` (record fixups, `$STANDARD_INFORMATION`, `$DATA`, runlists) |
@@ -82,7 +82,7 @@ assets were copied.
 | File lists (`.efu`) as index sources, export | `filelist.py` |
 | Filters and bookmarks | `settings.filters/bookmarks`, `Engine.search`, `gui.SearchWindow` |
 | Service for unelevated UI (privileged volume access) | `service.py` (`VolumeProxy`, `ServiceVolume`, SCM install/control) |
-| Named-pipe IPC (SDK / `es.exe` role) | `ipc.py`, `queryipc.py`, `filefinder search` |
+| Named-pipe IPC (SDK / `es.exe` role) | `ipc.py`, `queryipc.py`, `mfinder search` |
 | Tray icon, global hotkey, run in background, run at startup | `tray.py`, `winshell.py`, `gui.Controller` |
 | Multiple search windows sharing one index | `gui.Controller` / `gui.SearchWindow` |
 | ETP/FTP server | `etp.py` |
@@ -102,8 +102,8 @@ assets were copied.
   is tested through the same pipe server in console mode).
 * **IPC is not binary-compatible with Everything's SDK.** Everything uses
   `WM_COPYDATA` window messages and its own pipe protocol; programs written for
-  the Everything SDK will not talk to FileFinder. FileFinder has its own
-  per-user pipe protocol (`queryipc.py`) and `filefinder search`.
+  the Everything SDK will not talk to M-Finder. M-Finder has its own
+  per-user pipe protocol (`queryipc.py`) and `mfinder search`.
 * **ETP.** The server speaks plain FTP (passive mode, read-only) plus
   `SITE SEARCH <query>`; Everything's ETP wire extensions were not observable
   in the binary analysis, so Everything's own ETP client may not be able to

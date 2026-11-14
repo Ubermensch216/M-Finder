@@ -11,11 +11,11 @@ from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from filefinder import ntfs, query
-from filefinder.engine import Engine
-from filefinder.index import DatabaseError, Index
-from filefinder.scanner import Excludes, scan_folder
-from filefinder.settings import Settings
+from mfinder import ntfs, query
+from mfinder.engine import Engine
+from mfinder.index import DatabaseError, Index
+from mfinder.scanner import Excludes, scan_folder
+from mfinder.settings import Settings
 
 
 def make_tree(root):
@@ -219,7 +219,7 @@ class UsnTests(unittest.TestCase):
 
 class EngineAndHttpTests(unittest.TestCase):
     def test_engine_scan_save_load_and_http(self):
-        from filefinder.httpserver import make_server
+        from mfinder.httpserver import make_server
 
         with tempfile.TemporaryDirectory() as d:
             tree = os.path.join(d, "tree")
@@ -266,7 +266,7 @@ class EngineAndHttpTests(unittest.TestCase):
                 srv.server_close()
 
 
-@unittest.skipUnless(sys.platform == "win32" and os.environ.get("FF_GUI_TEST"), "set FF_GUI_TEST=1 to run the Tk smoke test")
+@unittest.skipUnless(sys.platform == "win32" and os.environ.get("MF_GUI_TEST"), "set MF_GUI_TEST=1 to run the Tk smoke test")
 class GuiSmoke(unittest.TestCase):
     def pump(self, ctl, cond, timeout=15):
         end = time.time() + timeout
@@ -276,7 +276,7 @@ class GuiSmoke(unittest.TestCase):
         return cond()
 
     def test_gui(self):
-        from filefinder.gui import Controller
+        from mfinder.gui import Controller
 
         with tempfile.TemporaryDirectory() as d:
             tree = os.path.join(d, "tree")
@@ -333,7 +333,7 @@ class GuiSmoke(unittest.TestCase):
                 # every supported format gets its own viewer
                 kinds = [("sample.docx", "RichView"), ("sample.hwp", "RichView"), ("sample.hwpx", "RichView"),
                          ("sample.md", "RichView"), ("sample.xlsx", "SheetView"), ("sample.txt", "TextView")]
-                from filefinder import viewers
+                from mfinder import viewers
 
                 if viewers.HAVE_PDF:
                     kinds.append(("sample.pdf", "PdfView"))

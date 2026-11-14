@@ -8,7 +8,7 @@ import zlib
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from filefinder import preview
+from mfinder import preview
 
 SS, MSS, CUTOFF = 512, 64, 4096
 FREE, ENDC, FATSEC = 0xFFFFFFFF, 0xFFFFFFFE, 0xFFFFFFFD
@@ -229,9 +229,9 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(ole.openstream("PrvText").read().decode("utf-16-le"), "preview only")
 
     def test_content_search_reads_hwp_and_docx(self):
-        from filefinder import query
-        from filefinder.index import Index
-        from filefinder.scanner import scan_folder
+        from mfinder import query
+        from mfinder.index import Index
+        from mfinder.scanner import scan_folder
 
         self.write("a.hwp", make_hwp(["제1조 계약의 목적", "끝"]))
         self.write("b.hwp", make_hwp(["다른 내용"]))

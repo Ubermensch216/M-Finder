@@ -12,11 +12,11 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from test_core import make_tree
 
-from filefinder import filelist, i18n, ipc, mftparse, query, service, theme, tray, watcher
-from filefinder.engine import Engine
-from filefinder.index import FILE_ATTRIBUTE_DIRECTORY, Index
-from filefinder.scanner import Excludes, scan_folder
-from filefinder.settings import Settings, default_filters
+from mfinder import filelist, i18n, ipc, mftparse, query, service, theme, tray, watcher
+from mfinder.engine import Engine
+from mfinder.index import FILE_ATTRIBUTE_DIRECTORY, Index
+from mfinder.scanner import Excludes, scan_folder
+from mfinder.settings import Settings, default_filters
 
 
 def scanned(tmp):
@@ -170,8 +170,8 @@ class MftParseTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "win32", "Windows only")
     def test_fill_matches_stat_on_real_volume(self):
-        from filefinder import ntfs
-        from filefinder.engine import is_admin
+        from mfinder import ntfs
+        from mfinder.engine import is_admin
 
         if not is_admin():
             self.skipTest("needs administrator")
@@ -271,7 +271,7 @@ class FileListTests(unittest.TestCase):
 class IpcTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == "win32", "named pipes")
     def test_pipe_roundtrip_streaming_and_errors(self):
-        name = f"FileFinder-test-{os.getpid()}-{int(time.time())}"
+        name = f"M-Finder-test-{os.getpid()}-{int(time.time())}"
 
         def handler(req, send_bin):
             if req["op"] == "echo":
@@ -311,7 +311,7 @@ class IpcTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "win32", "named pipes")
     def test_query_ipc_end_to_end(self):
-        from filefinder import queryipc
+        from mfinder import queryipc
 
         with tempfile.TemporaryDirectory() as d:
             tree = os.path.join(d, "t")
@@ -322,7 +322,7 @@ class IpcTests(unittest.TestCase):
             e.rebuild()
             shown = []
             if queryipc.running():
-                self.skipTest("a real FileFinder is running for this user")
+                self.skipTest("a real M-Finder is running for this user")
             q = queryipc.QueryIpc(e, on_show=shown.append)
             q.start()
             try:
@@ -389,8 +389,8 @@ class UiSupportTests(unittest.TestCase):
         import ast
         import glob
 
-        keys = set(json.load(open(os.path.join(os.path.dirname(__file__), "..", "filefinder", "locales", "ko.json"), encoding="utf-8")))
-        for f in glob.glob(os.path.join(os.path.dirname(__file__), "..", "filefinder", "*.py")):
+        keys = set(json.load(open(os.path.join(os.path.dirname(__file__), "..", "mfinder", "locales", "ko.json"), encoding="utf-8")))
+        for f in glob.glob(os.path.join(os.path.dirname(__file__), "..", "mfinder", "*.py")):
             for n in ast.walk(ast.parse(open(f, encoding="utf-8").read())):
                 if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "_" and n.args:
                     try:
