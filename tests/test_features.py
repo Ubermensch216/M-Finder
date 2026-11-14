@@ -323,14 +323,24 @@ class IpcTests(unittest.TestCase):
             shown = []
             if queryipc.running():
                 self.skipTest("a real M-Finder is running for this user")
-            q = queryipc.QueryIpc(e, on_show=shown.append)
+            quits = []
+            q = queryipc.QueryIpc(e, on_show=shown.append, on_quit=lambda: quits.append(1))
             q.start()
             try:
                 self.assertTrue(queryipc.running())
                 res = queryipc.request({"op": "search", "query": "cat", "filter": "Picture", "count": 1, "sort": "size", "asc": False})
                 self.assertEqual(res["total"], 2)
                 self.assertEqual(res["results"][0]["name"], "cat.JPG")
-                self.assertEqual(queryipc.request({"op": "status"})["objects"], e.index.live_count())
+                # the next page of the same query comes from the cached result list
+                page2 = queryipc.request({"op": "search", "query": "cat", "filter": "Picture", "offset": 1, "count": 1, "sort": "size", "asc": False})
+                self.assertEqual((page2["total"], len(page2["results"])), (2, 1))
+                self.assertNotEqual(page2["results"][0]["name"], "cat.JPG")
+                status = queryipc.request({"op": "status"})
+                self.assertEqual(status["objects"], e.index.live_count())
+                self.assertTrue(status["ready"])
+                self.assertIn("Picture", queryipc.request({"op": "filters"})["filters"])
+                queryipc.request({"op": "quit"})
+                self.assertEqual(quits, [1])
                 queryipc.request({"op": "show", "query": "hi"})
                 self.assertEqual(shown, ["hi"])
                 with self.assertRaises(OSError):

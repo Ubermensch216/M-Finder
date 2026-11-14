@@ -26,7 +26,7 @@ which behaviour is evidenced, and the deliberate differences.
 * **Folder sizes**, computed in the background and searchable (`folder: size:>1gb`).
 * **GUI** — virtual list that stays fast with millions of results, sortable/resizable columns, **filters** (Audio/Picture/… + your own), **bookmarks**, several windows sharing one index, **dark/light theme**, **English/한국어** (add your own `locales/*.json`), tray icon, global hotkey, run in background / at startup.
 * **File lists** — index `.efu`/`.csv`/`.txt` lists as extra sources; export results as `.efu`/`.csv`/`.txt`.
-* **Servers** — read-only HTTP search page/JSON; ETP-style FTP server (browse, `SITE SEARCH`, optional downloads); per-user named-pipe IPC (used by `mfinder search`, and to reuse a running instance).
+* **Servers** — read-only HTTP search page/JSON; ETP-style FTP server (browse, `SITE SEARCH`, optional downloads); per-user named-pipe IPC (used by `mfinder search`, to reuse a running instance, and by M-Dir's search pane). IPC requests: `ping`, `status` (with `ready`/`rev`), `search` (paged; the sorted result list of the last query is kept until the query or the index changes), `filters`, `show`, `quit`.
 * **Service** — optional privileged helper so the GUI can use the MFT/USN journal **without running as administrator**.
 
 Requires Windows and Python 3.10+ (standard library only; tested on 3.14). PDF preview and PDF/picture handling use the optional `pymupdf` package (`pip install pymupdf`, or `pip install .[pdf]`); everything else works without it.
@@ -35,6 +35,7 @@ Requires Windows and Python 3.10+ (standard library only; tested on 3.14). PDF p
 
 ```powershell
 python -m mfinder                          # GUI
+python -m mfinder gui --headless           # no window: index + IPC only (M-Dir starts it this way); ends on the IPC "quit" request
 python -m mfinder "ext:py size:>50kb"      # GUI pre-filled (reuses a running instance)
 python -m mfinder search -l -n 20 "report ext:docx;pdf dm:thisyear"
 python -m mfinder search -f Picture --export pics.efu "holiday"

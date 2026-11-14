@@ -935,8 +935,11 @@ DEFAULT_FILTER_NAMES = {"Everything", "Audio", "Compressed", "Document", "Execut
 class Controller:
     """Owns the Tk root, the shared engine, servers, tray icon and the search windows."""
 
-    def __init__(self, settings: Settings, query_text: str = "", minimized: bool = False) -> None:
+    def __init__(self, settings: Settings, query_text: str = "", minimized: bool = False, headless: bool = False) -> None:
         self.settings = settings
+        # Headless: no window at start and closing the last one keeps running; the index is served over IPC
+        # to another program (M-Dir), which ends this process with the "quit" request.
+        self.headless = headless
         i18n.init(settings.language)
         self.root = tk.Tk()
         self.root.withdraw()
@@ -957,7 +960,7 @@ class Controller:
 
         self._start_ipc()
         self._start_tray()
-        if minimized and self.tray is not None:
+        if headless or (minimized and self.tray is not None):
             self.hidden = True
         else:
             self.hidden = False
@@ -986,7 +989,9 @@ class Controller:
         from .queryipc import QueryIpc
 
         try:
-            self.ipc = QueryIpc(self.engine, on_show=lambda q: self.q.put(("show", q)))
+            self.ipc = QueryIpc(
+                self.engine, on_show=lambda q: self.q.put(("show", q)), on_quit=lambda: self.q.put(("quit",))
+            )
             self.ipc.start()
         except OSError:
             self.ipc = None
@@ -1037,6 +1042,9 @@ class Controller:
                     self.show(msg[1])
                 elif kind == "tray":
                     self._tray_event(msg[1])
+                elif kind == "quit":
+                    self.quit()
+                    return
         except queue.Empty:
             pass
         for w in list(self.windows):
@@ -1084,6 +1092,10 @@ class Controller:
             win.destroy()
         elif s.run_in_background and self.tray is not None:
             win.withdraw()
+        elif self.headless:  # the program using the index decides when this process ends
+            self.windows.remove(win)
+            win.destroy()
+            self.hidden = True
         else:
             self.quit()
 
@@ -1178,15 +1190,19 @@ class Controller:
             self.quit()
 
 
-def run(settings: Settings, query_text: str = "", minimized: bool = False, new_instance: bool = False) -> int:
+def run(
+    settings: Settings, query_text: str = "", minimized: bool = False, new_instance: bool = False, headless: bool = False
+) -> int:
     if os.name == "nt" and settings.single_instance and not new_instance:
         from . import queryipc
 
         if queryipc.running():  # hand the query to the running instance and leave
+            if headless:  # asked for the index only, and a running instance already serves it
+                return 0
             try:
                 queryipc.request({"op": "show", "query": query_text})
                 return 0
             except OSError:
                 pass
-    Controller(settings, query_text, minimized).root.mainloop()
+    Controller(settings, query_text, minimized, headless).root.mainloop()
     return 0

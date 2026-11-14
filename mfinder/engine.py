@@ -41,6 +41,7 @@ class Engine:
         self.status = "Idle"
         self.building = False
         self.filling = False
+        self.ready = False  # an index is loaded or built and can be searched
         self._cancel = threading.Event()
         self._fill_cancel = threading.Event()
         self._build_lock = threading.Lock()
@@ -94,6 +95,7 @@ class Engine:
         self.stop_monitors()
         self.index = idx
         self._last_save_rev = idx.rev
+        self.ready = True
         self._set_status(f"{idx.live_count():,} objects (database loaded)")
         return True
 
@@ -143,6 +145,7 @@ class Engine:
             self.stop_monitors()
             self._fill_cancel.set()
             self.index = new
+            self.ready = True
             self._set_status(f"{new.live_count():,} objects")
             self.save()
             self.start_monitors()

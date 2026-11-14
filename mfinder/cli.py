@@ -207,7 +207,10 @@ def _attach_console() -> None:
 def cmd_gui(args) -> int:
     from .gui import run
 
-    return run(Settings.load(), " ".join(getattr(args, "query", []) or []), args.minimized, args.new_instance)
+    return run(
+        Settings.load(), " ".join(getattr(args, "query", []) or []), args.minimized, args.new_instance,
+        getattr(args, "headless", False),
+    )
 
 
 def main(argv=None) -> int:
@@ -224,6 +227,8 @@ def main(argv=None) -> int:
     g.add_argument("query", nargs="*")
     g.add_argument("--minimized", action="store_true", help="start hidden in the tray")
     g.add_argument("--new-instance", action="store_true", help="do not reuse a running instance")
+    g.add_argument("--headless", action="store_true",
+                   help="no window: keep the index and serve searches over IPC (used by M-Dir); ends on the IPC 'quit' request")
     g.set_defaults(func=cmd_gui)
 
     s = sub.add_parser("search", help="search from the command line (uses a running M-Finder if there is one)")
