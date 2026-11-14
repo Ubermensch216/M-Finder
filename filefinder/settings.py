@@ -60,7 +60,7 @@ class Settings:
     show_status_bar: bool = True
     show_folder_sizes: bool = True
     show_preview: bool = True
-    preview_pos: str = "bottom"  # bottom | right | left
+    preview_pos: str = "right"  # bottom | right | left
     preview_height: int = 260
     preview_width: int = 480
     geometry: str = "900x600"

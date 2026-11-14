@@ -384,7 +384,7 @@ class SearchWindow(tk.Toplevel):
         self.v_regex = tk.BooleanVar(value=s.regex)
         self.v_status = tk.BooleanVar(value=s.show_status_bar)
         self.v_preview = tk.BooleanVar(value=s.show_preview)
-        self.v_ppos = tk.StringVar(value=s.preview_pos if s.preview_pos in ("bottom", "right", "left") else "bottom")
+        self.v_ppos = tk.StringVar(value=s.preview_pos if s.preview_pos in ("bottom", "right", "left") else "right")
         self._preview_after = None
         self.var = tk.StringVar(value=query_text)
 
