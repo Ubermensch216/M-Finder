@@ -15,7 +15,7 @@ from tkinter import font as tkfont
 from . import __version__, filelist, i18n, query, theme, winshell
 from .engine import Engine, is_admin
 from .etp import EtpService
-from .fmt import format_size, format_time
+from .fmt import format_size, format_time, split_ext
 from .gui_dialogs import OptionsDialog, ask_text, organize_bookmarks, organize_filters
 from .httpserver import HttpService
 from .i18n import _
@@ -48,7 +48,7 @@ def syntax_help() -> str:
 class VirtualList(tk.Frame):
     """Canvas-drawn table that only renders the visible rows, so millions of results stay fast."""
 
-    COLS = [("name", "Name"), ("path", "Path"), ("size", "Size"), ("mtime", "Date Modified")]
+    COLS = [("name", "Name"), ("path", "Path"), ("size", "Size"), ("mtime", "Date Modified"), ("ext", "File Type")]
 
     def __init__(self, master, app: "SearchWindow") -> None:
         super().__init__(master)
@@ -99,7 +99,10 @@ class VirtualList(tk.Frame):
     # ---- data -----------------------------------------------------------
 
     def widths(self) -> dict:
-        return self.app.engine.settings.column_widths
+        w = self.app.engine.settings.column_widths
+        if "ext" not in w:
+            w["ext"] = 80
+        return w
 
     def set_ids(self, ids: list[int], keep_view: bool = False) -> None:
         keep_ids = None
@@ -202,6 +205,9 @@ class VirtualList(tk.Frame):
                           text=(format_size(size) if show_dir_sizes else "") if is_dir else format_size(size))
             x += widths["size"]
             c.create_text(x + 6, ty, anchor="w", font=self.font, fill=COLORS["fg"], text=format_time(mtime))
+            x += widths["mtime"]
+            ftype = _("Folder") if is_dir else split_ext(idx.names[i]).upper()
+            c.create_text(x + 6, ty, anchor="w", font=self.font, fill=COLORS["fg"], text=self._fit(ftype, widths["ext"] - 10))
         page = max(1, h // self.rowh)
         if total <= page:
             self.sb.set(0, 1)
@@ -366,6 +372,7 @@ class SearchWindow(tk.Toplevel):
         self.geometry(s.geometry)
         self.minsize(480, 240)
         self.configure(bg=COLORS["window"])
+        theme.apply_window(self)
         try:
             self.iconbitmap(ctl.icon_path)
         except tk.TclError:
@@ -528,7 +535,7 @@ class SearchWindow(tk.Toplevel):
         if key == s.sort_key:
             s.sort_ascending = not s.sort_ascending
         else:
-            s.sort_key, s.sort_ascending = key, key in ("name", "path")
+            s.sort_key, s.sort_ascending = key, key in ("name", "path", "ext")
         self.set_sort(s.sort_key, s.sort_ascending)
 
     def set_sort(self, key: str, ascending: bool) -> None:

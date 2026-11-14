@@ -694,7 +694,7 @@ def sort_results(
                 reverse=reverse,
             )
         elif key == "ext":
-            ids.sort(key=lambda i: (split_ext(lower[i]), lower[i]), reverse=reverse)
+            ids.sort(key=lambda i: ("" if attrs[i] & DIR else split_ext(lower[i]), lower[i]), reverse=reverse)
         elif key in ("size", "mtime"):
             if not index.ensure_meta(ids, cancel):
                 return None

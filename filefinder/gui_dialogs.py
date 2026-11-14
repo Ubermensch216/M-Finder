@@ -7,7 +7,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import TYPE_CHECKING
 
-from . import i18n, service, winshell
+from . import i18n, service, theme, winshell
 from .engine import is_admin
 from .i18n import _
 from .theme import COLORS
@@ -29,6 +29,7 @@ class _ListOrganizer(tk.Toplevel):
         super().__init__(parent)
         self.title(title)
         self.transient(parent)
+        theme.apply_window(self)
         self.items = [dict(i) for i in items]
         self.on_save = on_save
         self.lb = tk.Listbox(self, width=48, height=12, exportselection=False)
@@ -110,6 +111,7 @@ class OptionsDialog(tk.Toplevel):
         self.title(_("FileFinder Options"))
         self.transient(win)
         self.resizable(False, False)
+        theme.apply_window(self)
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True, padx=8, pady=8)
         self.vars: dict[str, tk.Variable] = {}

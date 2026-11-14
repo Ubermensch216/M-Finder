@@ -64,7 +64,7 @@ class Settings:
     preview_height: int = 260
     preview_width: int = 480
     geometry: str = "900x600"
-    column_widths: dict = field(default_factory=lambda: {"name": 280, "path": 380, "size": 90, "mtime": 140})
+    column_widths: dict = field(default_factory=lambda: {"name": 280, "path": 380, "size": 90, "mtime": 140, "ext": 80})
     # background / shell integration
     tray_icon: bool = False
     run_in_background: bool = False  # closing the window hides it to the tray

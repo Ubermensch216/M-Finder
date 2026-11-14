@@ -22,7 +22,7 @@ except Exception:  # pragma: no cover - depends on the environment
 
 #: extensions that get a dedicated, formatted viewer
 RICH_EXTS = {".hwpx": "HWPX", ".hwp": "HWP", ".docx": "Word", ".xlsx": "Excel", ".pdf": "PDF",
-             ".md": "Markdown", ".markdown": "Markdown", ".txt": "Text"}
+             ".md": "Markdown", ".markdown": "Markdown", ".html": "HTML", ".htm": "HTML", ".txt": "Text"}
 
 
 @dataclass
@@ -40,9 +40,9 @@ def _text(path: str, label: str = "") -> Loaded:
     return Loaded("text", (pv.text, pv.truncated), label or pv.kind)
 
 
-def load(path: str) -> Loaded:
+def load(path: str, html_mode: str = "page") -> Loaded:
     """Parse ``path`` for display. Never raises."""
-    from . import docx, hwp, hwpx, image, markdown, rhwp, xlsx
+    from . import docx, html as html_viewer, hwp, hwpx, image, markdown, rhwp, xlsx
 
     ext = os.path.splitext(path)[1].lower()
     label = RICH_EXTS.get(ext, "")
@@ -62,6 +62,8 @@ def load(path: str) -> Loaded:
                 return Loaded(error=str(e) or "unreadable", label=image.EXTS[ext])
         if ext == ".txt":
             return _text(path, label)
+        if ext in (".html", ".htm") and html_mode == "code":
+            return _text(path, label)
         if ext in rhwp.EXTS:  # exact page rendering by the rhwp CLI, when installed
             doc = rhwp.open_doc(path)
             if doc is not None:
@@ -75,6 +77,8 @@ def load(path: str) -> Loaded:
                 return Loaded("rich", hwp.read(path), label)
             if ext in (".md", ".markdown"):
                 return Loaded("rich", markdown.read(path), label)
+            if ext in (".html", ".htm"):
+                return Loaded("rich", html_viewer.read(path), label)
             if ext == ".xlsx":
                 return Loaded("sheet", xlsx.read(path), label)
         except hwp.ViewerError as e:
