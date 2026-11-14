@@ -46,6 +46,9 @@ class Settings:
     sort_key: str = "name"
     sort_ascending: bool = True
     content_max_mb: int = 64
+    rhwp_enabled: bool = True  # exact HWP/HWPX preview through rhwp when it is installed
+    rhwp_path: str = ""  # rhwp executable for exact HWP/HWPX preview ("" = look next to the app / in %APPDATA%\FileFinder\rhwp)
+    rhwp_webfonts: bool = False  # let rhwp download missing fonts (public CDN); off = installed/cached fonts only
     filters: list[dict] = field(default_factory=default_filters)
     current_filter: str = "Everything"
     bookmarks: list[dict] = field(default_factory=list)  # {name, search, filter, case, ww, path, regex, sort, asc}

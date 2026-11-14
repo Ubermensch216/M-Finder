@@ -27,7 +27,7 @@ RICH_EXTS = {".hwpx": "HWPX", ".hwp": "HWP", ".docx": "Word", ".xlsx": "Excel", 
 
 @dataclass
 class Loaded:
-    kind: str = ""  # text | rich | sheet | pdf
+    kind: str = ""  # text | rich | sheet | pdf | image | hwppages
     model: Any = None
     label: str = ""
     error: str = ""  # binary | folder | encrypted | unreadable | nopdf | <message>
@@ -42,7 +42,7 @@ def _text(path: str, label: str = "") -> Loaded:
 
 def load(path: str) -> Loaded:
     """Parse ``path`` for display. Never raises."""
-    from . import docx, hwp, hwpx, markdown, xlsx
+    from . import docx, hwp, hwpx, image, markdown, rhwp, xlsx
 
     ext = os.path.splitext(path)[1].lower()
     label = RICH_EXTS.get(ext, "")
@@ -53,8 +53,19 @@ def load(path: str) -> Loaded:
             if not HAVE_PDF:
                 return Loaded(error="nopdf", label=label)
             return Loaded("pdf", path, label)
+        if ext in image.EXTS:
+            try:
+                return Loaded("image", image.read(path), image.EXTS[ext])
+            except image.ImageError as e:
+                return Loaded(error="toolarge" if str(e) == "too large" else "unreadable", label=image.EXTS[ext])
+            except OSError as e:
+                return Loaded(error=str(e) or "unreadable", label=image.EXTS[ext])
         if ext == ".txt":
             return _text(path, label)
+        if ext in rhwp.EXTS:  # exact page rendering by the rhwp CLI, when installed
+            doc = rhwp.open_doc(path)
+            if doc is not None:
+                return Loaded("hwppages", doc, label)
         try:
             if ext == ".docx":
                 return Loaded("rich", docx.read(path), label)

@@ -978,6 +978,118 @@ def _col_name(c: int) -> str:
     return s
 
 
+# ---- pictures ----------------------------------------------------------------------------------
+
+
+class ImageView(_View):
+    """A single picture, fitted to the pane (never enlarged past 100 %) and zoomable with Ctrl+wheel."""
+
+    MARGIN = 10
+    MAX_SIDE = 12000
+    MAX_PIXELS = 36_000_000
+
+    def __init__(self, master, pane) -> None:
+        super().__init__(master, pane)
+        f = self.frame
+        self.canvas = tk.Canvas(f, bg="#4a4a4a", highlightthickness=0, takefocus=True)
+        self.vsb = ttk.Scrollbar(f, orient="vertical", command=self.canvas.yview)
+        self.hsb = ttk.Scrollbar(f, orient="horizontal", command=self.canvas.xview)
+        self.canvas.configure(yscrollcommand=self.vsb.set, xscrollcommand=self.hsb.set)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.vsb.grid(row=0, column=1, sticky="ns")
+        self.hsb.grid(row=1, column=0, sticky="ew")
+        f.grid_rowconfigure(0, weight=1)
+        f.grid_columnconfigure(0, weight=1)
+        self.canvas.bind("<Configure>", lambda e: self._on_configure())
+        self.canvas.bind("<MouseWheel>", lambda e: self._wheel(e, self.canvas))
+        self.canvas.bind("<Shift-MouseWheel>", lambda e: (self.canvas.xview_scroll(-int(e.delta / 120) * 3, "units"), "break")[1])
+        self.canvas.bind("<Button-1>", lambda e: self.canvas.focus_set())
+        self.canvas.bind("<Double-Button-1>", lambda e: self._reset_zoom())
+        self.raster = None
+        self.photo = None
+        self.info = ""
+        self._last_w = 0
+        self._job = None
+
+    def show(self, model) -> None:
+        self.clear()
+        self.raster = model
+        self.zoom = 1.0
+        self.info = f"{model.width}×{model.height}"
+        self._schedule()
+
+    def clear(self) -> None:
+        super().clear()
+        self.raster = self.photo = None
+        self.canvas.delete("all")
+        self.canvas.configure(scrollregion=(0, 0, 0, 0))
+
+    def highlight(self, rx) -> int:
+        return 0
+
+    def _reset_zoom(self) -> None:
+        self.zoom = 1.0
+        self.apply_zoom()
+
+    def _on_configure(self) -> None:
+        if self.raster is not None and abs(self.canvas.winfo_width() - self._last_w) > 8:
+            self._schedule()
+
+    def _schedule(self) -> None:
+        if self._job is None:
+            self._job = self.frame.after_idle(self._draw)
+
+    def apply_zoom(self) -> None:
+        if self.raster is not None:
+            self._schedule()
+
+    def _fit_scale(self, cw: int, ch: int) -> float:
+        r = self.raster
+        avail_w, avail_h = max(cw - 2 * self.MARGIN, 50), max(ch - 2 * self.MARGIN, 50)
+        return min(1.0, avail_w / r.width, avail_h / r.height)
+
+    def _draw(self) -> None:
+        self._job = None
+        r = self.raster
+        if r is None:
+            return
+        c = self.canvas
+        cw, ch = max(c.winfo_width(), 100), max(c.winfo_height(), 100)
+        self._last_w = cw
+        c.delete("all")
+        self.photo = None
+        if r.native:  # Tk fallback: shown 1:1 (zoom out by integer subsampling only)
+            try:
+                ph = tk.PhotoImage(data=r.tk_data())
+                k = max(1, int(round(1 / max(self.zoom, 0.05)))) if self.zoom < 1 else 1
+                if k > 1:
+                    ph = ph.subsample(k, k)
+                elif self.zoom > 1:
+                    z = max(1, int(round(self.zoom)))
+                    ph = ph.zoom(z, z)
+            except tk.TclError:
+                return
+            w, h = ph.width(), ph.height()
+        else:
+            s = self._fit_scale(cw, ch) * self.zoom
+            w, h = max(1, round(r.width * s)), max(1, round(r.height * s))
+            cap = min(self.MAX_SIDE / max(w, h), (self.MAX_PIXELS / (w * h)) ** 0.5, 1e9)
+            if cap < 1:
+                w, h = max(1, int(w * cap)), max(1, int(h * cap))
+            try:
+                ph = tk.PhotoImage(data=r.ppm(w, h), format="PPM")
+            except (tk.TclError, MemoryError, ValueError):
+                return
+        self.photo = ph
+        tw, th = max(cw, w + 2 * self.MARGIN), max(ch, h + 2 * self.MARGIN)
+        x, y = (tw - w) / 2, (th - h) / 2
+        c.create_rectangle(x + 3, y + 3, x + w + 3, y + h + 3, fill="#2e2e2e", outline="")
+        c.create_image(x, y, anchor="nw", image=ph)
+        c.configure(scrollregion=(0, 0, tw, th))
+        c.xview_moveto(0)
+        c.yview_moveto(0)
+
+
 # ---- PDF ---------------------------------------------------------------------------------------
 
 
@@ -1150,7 +1262,7 @@ class PdfView(_View):
                 ph = self._photo(i)
                 c.create_image(px, self.tops[i], anchor="nw", image=ph)
             except Exception:
-                c.create_rectangle(px, self.tops[i], px + pw, self.tops[i] + ph_, fill="#ffffff", outline="")
+                self._placeholder(c, i, px, self.tops[i], pw, ph_)
             for k, (pg, rx0, ry0, rx1, ry1) in enumerate(self.rects):
                 if pg == i:
                     cur = self.hits and 0 <= self.cur < len(self.hits) and self.hits[self.cur] == k
@@ -1159,6 +1271,9 @@ class PdfView(_View):
                                        fill=CUR_BG if cur else HIT_BG, outline="#ff7f00" if cur else "#e0a800",
                                        width=2 if cur else 1, stipple="gray50")
             i += 1
+
+    def _placeholder(self, c, i: int, x: float, y: float, w: float, h: float) -> None:
+        c.create_rectangle(x, y, x + w, y + h, fill="#ffffff", outline="")
 
     # -- search --
     def highlight(self, rx) -> int:
@@ -1223,3 +1338,251 @@ class PdfView(_View):
             x = x0 * self.scale
             self.canvas.xview_moveto(max(0.0, (x - self.canvas.winfo_width() / 3) / self.total_w))
         self._schedule()
+
+
+# ---- HWP / HWPX pages rendered by rhwp ---------------------------------------------------------
+
+
+class _NoDoc:
+    def close(self) -> None:
+        pass
+
+
+class RhwpView(PdfView):
+    """Pages of a HWP/HWPX document, each rendered on demand by the rhwp CLI into a one-page PDF.
+
+    Shares the PDF viewer's canvas, zoom and match marking; pages that are not rendered yet show a
+    white placeholder. The page being looked at is rendered first, then the next few (all of them
+    while a search is active, up to ``MAX_SEARCH_PAGES``).
+    """
+
+    AHEAD = 4
+    MAX_SEARCH_PAGES = 120
+    WORKERS = 2
+
+    def __init__(self, master, pane) -> None:
+        super().__init__(master, pane)
+        self.rdoc = None
+        self.job = None
+        self.pages: dict = {}  # page index -> pymupdf page (kept open while shown)
+        self.pdfs: dict = {}  # page index -> pymupdf.Document
+        self.failed: set = set()
+        self.inflight: set = set()
+        self.vis = (0, 0)
+        self.terms: list = []
+        self.info = ""
+        self.lock = threading.Lock()
+        self.wake = threading.Event()
+        self.finished: queue.Queue = queue.Queue()
+        self.pump_job = None
+
+    # -- lifecycle --
+    def show(self, model) -> None:
+        from . import rhwp
+
+        self.clear()
+        self.rdoc = model
+        self.job = rhwp.Job()
+        self.doc = _NoDoc()
+        n = min(model.pages, self.MAX_PAGES)
+        self.note = "" if model.pages <= n else f"{n} / {model.pages} pages"
+        first = self._open_page(0)
+        w, h = (first.rect.width, first.rect.height) if first is not None else (595.0, 842.0)
+        self.sizes = [(max(w, 1.0), max(h, 1.0))] * n
+        self._layout()
+        self.canvas.yview_moveto(0)
+        self.canvas.xview_moveto(0)
+        self._schedule()
+        self.info = f"{model.pages}p"
+        for _ in range(self.WORKERS):
+            threading.Thread(target=self._worker, args=(self.job,), daemon=True).start()
+        self._pump()
+
+    def clear(self) -> None:
+        if self.job is not None:
+            self.job.cancel()
+        self.wake.set()
+        if self.pump_job is not None:
+            try:
+                self.frame.after_cancel(self.pump_job)
+            except Exception:
+                pass
+            self.pump_job = None
+        for d in self.pdfs.values():
+            try:
+                d.close()
+            except Exception:
+                pass
+        self.pdfs, self.pages, self.failed, self.inflight = {}, {}, set(), set()
+        self.rdoc = self.job = None
+        self.terms = []
+        self.info = ""
+        self.vis = (0, 0)
+        self.finished = queue.Queue()
+        super().clear()
+
+    # -- page access --
+    def _open_page(self, i: int):
+        pg = self.pages.get(i)
+        if pg is not None:
+            return pg
+        if self.rdoc is None or not self.rdoc.has(i):
+            return None
+        try:
+            with open(self.rdoc.page_file(i), "rb") as fh:  # read fully: no handle stays open on the cache file
+                d = pymupdf.open(stream=fh.read(), filetype="pdf")
+            pg = d.load_page(0)
+        except Exception:
+            self.failed.add(i)
+            return None
+        self.pdfs[i] = d
+        self.pages[i] = pg
+        return pg
+
+    def _photo(self, i: int):
+        hit = self.cache.get(i)
+        if hit is not None and abs(hit[0] - self.scale) < 1e-6:
+            self.cache.move_to_end(i)
+            return hit[1]
+        page = self._open_page(i)
+        if page is None:
+            raise LookupError(i)
+        pix = page.get_pixmap(matrix=pymupdf.Matrix(self.scale, self.scale), alpha=False)
+        try:
+            ph = tk.PhotoImage(data=pix.tobytes("ppm"), format="PPM")
+        except tk.TclError:
+            ph = tk.PhotoImage(data=base64.b64encode(pix.tobytes("png")))
+        self.cache[i] = (self.scale, ph)
+        while len(self.cache) > 8:
+            self.cache.popitem(last=False)
+        return ph
+
+    def _placeholder(self, c, i: int, x: float, y: float, w: float, h: float) -> None:
+        c.create_rectangle(x, y, x + w, y + h, fill="#ffffff", outline="")
+        msg = "⚠" if i in self.failed else f"{i + 1} …"
+        c.create_text(x + w / 2, y + min(h / 2, 200), text=msg, fill="#999999", font=(DEFAULT_FAMILY, 18))
+
+    def _redraw(self) -> None:
+        super()._redraw()
+        if self.rdoc is None or not self.tops:
+            return
+        c = self.canvas
+        y0 = c.canvasy(0)
+        y1 = y0 + c.winfo_height()
+        first = max(0, bisect.bisect_right(self.tops, y0) - 1)
+        last = first
+        while last + 1 < len(self.tops) and self.tops[last + 1] < y1:
+            last += 1
+        self.vis = (first, last)
+        self.wake.set()
+
+    # -- background rendering --
+    def _wanted(self) -> int | None:
+        """Next page worth rendering (called with the lock held)."""
+        n = len(self.sizes)
+        first, last = self.vis
+        ahead = min(n - 1, last + (self.MAX_SEARCH_PAGES if self.terms else self.AHEAD))
+        order = list(range(first, last + 1)) + list(range(last + 1, ahead + 1)) + [first - 1, first - 2]
+        for i in order:
+            if 0 <= i < n and not self.rdoc.has(i) and i not in self.failed and i not in self.inflight:
+                return i
+        return None
+
+    def _worker(self, job) -> None:
+        while not job.cancelled:
+            with self.lock:
+                rdoc = self.rdoc if self.job is job else None
+                i = self._wanted() if rdoc is not None else None
+                if i is not None:
+                    self.inflight.add(i)
+            if rdoc is None:
+                return
+            if i is None:
+                self.wake.wait(0.5)
+                self.wake.clear()
+                continue
+            ok = rdoc.render(i, job)
+            with self.lock:
+                self.inflight.discard(i)
+                if not ok and not job.cancelled:
+                    self.failed.add(i)
+            if not job.cancelled:
+                self.finished.put((job, i, ok))
+
+    def _pump(self) -> None:
+        """UI thread: pick up the pages the workers finished."""
+        self.pump_job = None
+        if self.rdoc is None:
+            return
+        got = []
+        try:
+            while True:
+                job, i, ok = self.finished.get_nowait()
+                if job is self.job:
+                    got.append((i, ok))
+        except queue.Empty:
+            pass
+        ready = [i for i, ok in got if ok]
+        if self.terms:  # pages already in the cache never go through the workers: pick them up for the search
+            n = min(len(self.sizes), self.vis[1] + 1 + self.MAX_SEARCH_PAGES)
+            ready += [i for i in range(n) if i not in self.pages and i not in self.failed and i not in ready
+                      and self.rdoc.has(i)][:6]
+        relayout = False
+        for i in ready:
+            pg = self._open_page(i)
+            if pg is None:
+                continue
+            sz = (max(pg.rect.width, 1.0), max(pg.rect.height, 1.0))
+            if i < len(self.sizes) and sz != self.sizes[i]:
+                self.sizes[i] = sz
+                relayout = True
+            self._search_page(i)
+        if relayout:
+            self._relayout_keep()
+        if ready or got:
+            self._schedule()
+            if self.terms and not self.hits and not self.pdf_pending():
+                self.pane.hits_ready(self)  # every page searched, nothing found
+        self.pump_job = self.frame.after(150, self._pump)
+
+    # -- search --
+    def highlight(self, rx) -> int:
+        self.search_id += 1
+        self.rects, self.hits, self.cur = [], [], -1
+        self.terms = self.pane.pdf_terms() if rx is not None else []
+        self._schedule()
+        if self.rdoc is None or not self.terms:
+            return 0
+        self.wake.set()
+        for i in sorted(self.pages):
+            self._search_page(i)
+        return 0  # matches arrive page by page via pane.hits_ready()
+
+    def _search_page(self, i: int) -> None:
+        if not self.terms:
+            return
+        pg = self.pages.get(i)
+        if pg is None:
+            return
+        found = []
+        for t in self.terms:
+            try:
+                found += [(i, r.x0, r.y0, r.x1, r.y1) for r in pg.search_for(t)]
+            except Exception:
+                pass
+        found = [f for f in found if f not in self.rects]
+        if not found:
+            return
+        had = bool(self.hits)
+        cur_key = self.rects[self.hits[self.cur]] if had and 0 <= self.cur < len(self.hits) else None
+        self.rects = sorted(self.rects + found, key=lambda r: (r[0], r[2], r[1]))
+        self.hits = list(range(len(self.rects)))
+        self.cur = self.rects.index(cur_key) if cur_key in self.rects else -1
+        if not had:
+            self.pane.hits_ready(self)
+
+    def pdf_pending(self) -> bool:
+        if not self.terms or self.rdoc is None:
+            return False
+        n = min(len(self.sizes), self.vis[1] + 1 + self.MAX_SEARCH_PAGES)
+        return any(not self.rdoc.has(i) and i not in self.failed for i in range(n))

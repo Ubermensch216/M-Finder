@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from . import preview, viewers
 from .i18n import _
 from .theme import COLORS
-from .viewers import widgets
+from .viewers import rhwp as rhwp_viewer, widgets
 
 if TYPE_CHECKING:  # pragma: no cover
     from .gui import SearchWindow
@@ -53,7 +53,8 @@ class PreviewPane(tk.Frame):
         v = self.views.get(kind)
         if v is None:
             cls = {"text": widgets.TextView, "rich": widgets.RichView, "sheet": widgets.SheetView,
-                   "pdf": widgets.PdfView}[kind]
+                   "pdf": widgets.PdfView, "image": widgets.ImageView,
+                   "hwppages": widgets.RhwpView}[kind]
             v = self.views[kind] = cls(self.container, self)
             if kind == "text":
                 v.apply_theme(COLORS)
@@ -109,6 +110,8 @@ class PreviewPane(tk.Frame):
         self.path = path
         self.lbl.configure(text=os.path.basename(path))
         self._message(_("Loading..."))
+        st = self.app.ctl.settings
+        rhwp_viewer.configure(st.rhwp_path, st.rhwp_webfonts, st.rhwp_enabled)
 
         def work() -> None:
             self.q.put((seq, path, viewers.load(path)))
@@ -140,6 +143,7 @@ class PreviewPane(tk.Frame):
                 "encrypted": _("This document is encrypted; its text cannot be previewed."),
                 "unreadable": _("This file could not be read."),
                 "nopdf": _("PDF preview needs the PyMuPDF library (pip install pymupdf)."),
+                "toolarge": _("This picture is too large to preview."),
             }
             self.lbl.configure(text=head)
             self._message(msgs.get(ld.error, ld.error))
@@ -157,7 +161,8 @@ class PreviewPane(tk.Frame):
             self.lbl.configure(text=head)
             self._message(_("This file could not be read.") + f"\n({type(e).__name__}: {e})")
             return
-        self.lbl.configure(text=head)
+        info = getattr(view, "info", "")
+        self.lbl.configure(text=f"{head}  {info}" if info else head)
         self.highlight()
 
     # ---- matches ---------------------------------------------------------------------------
@@ -182,6 +187,9 @@ class PreviewPane(tk.Frame):
     def highlight(self) -> None:
         v = self.active
         if v is None or not self.path:
+            return
+        if isinstance(v, widgets.ImageView):  # nothing to search in a picture
+            self.lbl_hits.configure(text="")
             return
         rx, wanted = self._regex()
         n = v.highlight(rx)

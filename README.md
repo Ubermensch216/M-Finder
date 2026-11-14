@@ -12,14 +12,17 @@ which behaviour is evidenced, and the deliberate differences.
 * **Instant search** — 30–60 ms over ~1M entries, cancelable while you type.
 * **Everything search syntax** — AND/OR/NOT/groups, wildcards, `regex:`, `case:`, `ww:`, `path:`, `ext:`, `size:`, `dm:`/`dc:`/`da:`, `parent:`, `empty:`, `content:` (file contents), macros (`pic:`, `doc:` …).
 * **File preview with the file's own formatting** — select a result and a pane shows it the way the file looks (View → Preview Pane → *Bottom / Right / Left*, `F4` to show/hide, Ctrl+wheel or `+`/`−` to zoom). `content:` hits are highlighted and ◀ ▶ jump between them. One viewer per format:
-  * **.hwp / .hwpx** — fonts, sizes, colours, bold/italic/underline, alignment, indents, tables (merged cells, fills, borders) and pictures
+  * **.hwp / .hwpx** — with the optional [rhwp](https://github.com/edwardkim/rhwp) CLI installed (see below) every page is typeset exactly like Hancom Office: paper size and margins, headers/footers, line breaking, table borders, shapes, equations and embedded fonts; without it the built-in reader shows fonts, sizes, colours, bold/italic/underline, alignment, indents, tables (merged cells, fills, borders) and pictures
+  * **pictures** — .png .jpg .gif .bmp .tif .webp .ico, fitted to the pane (Ctrl+wheel zooms, double-click resets); .webp/.ico/.tif need Pillow, the rest work with PyMuPDF alone
   * **.docx** — styles, numbering/bullets, tables with merged cells, pictures, hyperlinks, highlights
   * **.xlsx** — a spreadsheet grid: sheet tabs, column widths, merged cells, fills, fonts, borders and number/date formats
   * **.pdf** — rendered pages (needs the optional `pymupdf` package; it is bundled in the exe)
   * **.md** — headings, lists, task lists, quotes, tables, code blocks, links, local images
   * **.txt** and anything else text-like — UTF-8/UTF-16/ANSI auto-detected
   
-  `content:` searches also look *inside* HWP/HWPX/Word/Excel/PowerPoint/OpenDocument files and PDFs (no IFilter or Office needed). Floating shapes/text boxes in HWP are shown in reading order, not at their page position.
+  **Exact HWP/HWPX preview with rhwp** — download `rhwp-v*-windows-x86_64.zip` from the [rhwp releases](https://github.com/edwardkim/rhwp/releases) (MIT licence), check it against `SHA256SUMS.txt`, and unpack it to `%APPDATA%\FileFinder\rhwp\` (or `rhwp\` next to `FileFinder.exe`, or set `rhwp_path` in `settings.json`). Pages are rendered on demand by `rhwp export-pdf -p N` (about 5 s per page; the page you look at first, then the next few — all of them while a `content:` match is being marked) and cached in `%APPDATA%\FileFinder\cache\rhwp\` (600 MB cap, least recently used first), so re-opening a document is instant. If rhwp is missing or cannot read a file the built-in reader is used. rhwp never touches the network unless `"rhwp_webfonts": true` is set (then it may download missing Korean fonts from a public CDN into its own font cache); `"rhwp_enabled": false` turns the whole thing off.
+
+`content:` searches also look *inside* HWP/HWPX/Word/Excel/PowerPoint/OpenDocument files and PDFs (no IFilter or Office needed). Floating shapes/text boxes in HWP are shown in reading order, not at their page position.
 * **Folder sizes**, computed in the background and searchable (`folder: size:>1gb`).
 * **GUI** — virtual list that stays fast with millions of results, sortable/resizable columns, **filters** (Audio/Picture/… + your own), **bookmarks**, several windows sharing one index, **dark/light theme**, **English/한국어** (add your own `locales/*.json`), tray icon, global hotkey, run in background / at startup.
 * **File lists** — index `.efu`/`.csv`/`.txt` lists as extra sources; export results as `.efu`/`.csv`/`.txt`.

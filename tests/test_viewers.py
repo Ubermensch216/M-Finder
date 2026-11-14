@@ -11,7 +11,7 @@ import fixtures
 from filefinder import preview, query, viewers
 from filefinder.index import Index
 from filefinder.scanner import scan_folder
-from filefinder.viewers import docx, hwp, hwpx, markdown, xlsx
+from filefinder.viewers import docx, hwp, hwpx, markdown, rhwp, xlsx
 from filefinder.viewers import model as M
 
 
@@ -25,6 +25,9 @@ def tables(doc):
 
 def images(doc):
     return [r for p in paras(doc) for r in p.runs if isinstance(r, M.Image)]
+
+
+rhwp.configure(enabled=False)  # the built-in readers are under test; rhwp has its own tests
 
 
 class Samples(unittest.TestCase):
@@ -199,6 +202,61 @@ class LoaderTests(Samples):
             with open(p, "w", encoding="utf-8") as f:
                 f.write("log line")
             self.assertEqual(viewers.load(p).model[0], "log line")
+
+
+class ImageTests(unittest.TestCase):
+    def test_png_and_broken(self):
+        from filefinder.viewers import image
+
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "a.png")
+            with open(p, "wb") as f:
+                f.write(fixtures.png(64, 40))
+            ld = viewers.load(p)
+            self.assertEqual((ld.kind, ld.label, ld.error), ("image", "PNG", ""))
+            r = ld.model
+            self.assertEqual((r.width, r.height), (64, 40))
+            if not r.native:
+                self.assertEqual(r.ppm(32, 20), b"P6 32 20 255\n" + r.ppm(32, 20)[13:])
+                self.assertEqual(len(r.ppm(32, 20)), 13 + 32 * 20 * 3)
+            bad = os.path.join(d, "bad.jpg")
+            with open(bad, "wb") as f:
+                f.write(b"not a picture")
+            ld = viewers.load(bad)
+            self.assertEqual((ld.kind, ld.error, ld.label), ("", "unreadable", "JPEG"))
+            self.assertIn(".png", image.EXTS)
+
+
+class RhwpTests(Samples):
+    def tearDown(self):
+        rhwp.configure(enabled=False)
+
+    def test_page_count_from_manifest(self):
+        self.assertEqual(rhwp._page_count('noise\n{"backend":"svg","pageCount":35,"renderedCount":1}\n'), 35)
+        self.assertEqual(rhwp._page_count("no json here"), 0)
+
+    def test_unavailable_falls_back_to_builtin_reader(self):
+        rhwp.configure(path=os.path.join(self.tmp.name, "missing", "rhwp.exe"), enabled=True)
+        old = os.environ.pop("RHWP_EXE", None)
+        try:
+            if not rhwp.find_exe():
+                self.assertIsNone(rhwp.open_doc(self.path("sample.hwp")))
+        finally:
+            if old:
+                os.environ["RHWP_EXE"] = old
+        rhwp.configure(enabled=False)
+        self.assertIsNone(rhwp.open_doc(self.path("sample.hwp")))
+        self.assertEqual(viewers.load(self.path("sample.hwp")).kind, "rich")
+
+    def test_job_captures_output_and_cancels(self):
+        job = rhwp.Job()
+        code, out = job.run([sys.executable, "-c", "print('hello')"], dict(os.environ), self.tmp.name, 30)
+        self.assertEqual((code, out.strip()), (0, "hello"))
+        code, _ = job.run([sys.executable, "-c", "import time; time.sleep(30)"], dict(os.environ), self.tmp.name, 0.5)
+        self.assertEqual(code, -2)  # timeout
+        job.cancel()
+        code, _ = job.run([sys.executable, "-c", "import time; time.sleep(30)"], dict(os.environ), self.tmp.name, 30)
+        self.assertEqual(code, -1)
 
 
 class ContentSearchTests(Samples):
