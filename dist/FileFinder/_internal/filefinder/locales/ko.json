@@ -160,5 +160,6 @@
  "Right": "오른쪽",
  "Left": "왼쪽",
  "Searching...": "검색 중...",
- "PDF preview needs the PyMuPDF library (pip install pymupdf).": "PDF 미리보기에는 PyMuPDF 라이브러리가 필요합니다 (pip install pymupdf)."
+ "PDF preview needs the PyMuPDF library (pip install pymupdf).": "PDF 미리보기에는 PyMuPDF 라이브러리가 필요합니다 (pip install pymupdf).",
+ "This picture is too large to preview.": "그림이 너무 커서 미리볼 수 없습니다."
 }
