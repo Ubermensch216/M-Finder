@@ -1,7 +1,7 @@
 """Per-user search IPC: lets other programs (and ``mfinder search``) query a running instance.
 
 The pipe is named after the user's SID and its ACL grants only that user, so one
-user's index is never exposed to another. Replaces Everything's window-message SDK.
+user's index is never exposed to another.
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ class QueryIpc:
             return {"ok": True}
         if op == "filters":
             return {"ok": True, "current": e.settings.current_filter,
-                    # a filter without a search ("Everything") is the client's own "no filter" entry
+                    # a filter without a search ("All") is the client's own "no filter" entry
                     "filters": [f["name"] for f in e.settings.filters if f.get("name") and f.get("search")]}
         if op == "quit":
             if self.on_quit is None:

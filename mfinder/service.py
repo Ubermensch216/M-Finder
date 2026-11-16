@@ -1,6 +1,6 @@
 """M-Finder service: lets an unelevated UI use the NTFS MFT / USN journal.
 
-Like Everything's service, a small privileged process opens the raw volume so the
+A small privileged process opens the raw volume so the
 GUI does not have to run as administrator. The service never hands out raw disk
 bytes: it exposes only (a) the USN journal / MFT enumeration (names, file
 reference numbers, attributes) and (b) metadata parsed from $MFT (size and
@@ -24,7 +24,7 @@ import threading
 from ctypes import wintypes
 from typing import Iterator, Optional
 
-from . import ntfs
+from . import ntfs, winshell
 from .ipc import PipeClient, PipeError, PipeServer, RemoteError, T_BIN, T_END, current_user_sid, sddl_for
 
 SERVICE_NAME = "MFinderSvc"
@@ -304,21 +304,38 @@ def _safe_location(path: str) -> bool:
     return any(b and p.startswith(os.path.normcase(os.path.realpath(b)) + os.sep) for b in bases)
 
 
+def _installed_exe() -> str:
+    base = os.environ.get("ProgramW6432") or os.environ.get("ProgramFiles") or r"C:\Program Files"
+    return os.path.join(base, "M-Finder", "M-Finder.exe")
+
+
+def _stage_frozen_exe() -> str:
+    """When running as a standalone .exe outside Program Files, copy it to C:\\Program Files\\M-Finder\\M-Finder.exe."""
+    src = os.path.realpath(sys.executable)
+    if _safe_location(src):
+        return src
+    dst = _installed_exe()
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    if os.path.normcase(src) != os.path.normcase(os.path.realpath(dst)):
+        import shutil
+
+        shutil.copy2(src, dst)
+    return dst
+
+
 def install_problems() -> list[str]:
-    pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if getattr(sys, "frozen", False):
-        checks = (("M-Finder executable", sys.executable),)
-    else:
-        checks = (("Python interpreter", sys.executable), ("M-Finder package", pkg_root))
+    if winshell.frozen():
+        return []  # standalone .exe is automatically staged to Program Files on install
+    checks = (("Python interpreter", sys.executable), ("M-Finder package", winshell.package_root()))
     return [f"{what} is in a location writable by non-administrators: {path}" for what, path in checks if not _safe_location(path)]
 
 
-def service_command_line(allow_sids: list[str]) -> str:
+def service_command_line(allow_sids: list[str], exe_path: Optional[str] = None) -> str:
     args = " ".join(f"--allow-sid {s}" for s in allow_sids)
-    if getattr(sys, "frozen", False):
-        return f'"{sys.executable}" service-run {args}'
-    pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    code = f"import sys; sys.path.insert(0, r'{pkg_root}'); from mfinder.service import service_main; service_main()"
+    if winshell.frozen():
+        exe = exe_path or sys.executable
+        return f'"{exe}" service-run {args}'
+    code = f"import sys; sys.path.insert(0, r'{winshell.package_root()}'); from mfinder.service import service_main; service_main()"
     return f'"{sys.executable}" -I -c "{code}" {args}'
 
 
@@ -337,11 +354,12 @@ def install(allow_sids: Optional[list[str]] = None, allow_user_paths: bool = Fal
             + "\n  ".join(problems)
             + "\nInstall M-Finder under Program Files, or pass --unsafe-allow-user-paths if you accept the risk."
         )
+    exe_path = _stage_frozen_exe() if (winshell.frozen() and not allow_user_paths) else None
     sids = allow_sids or [current_user_sid()]
     scm = _scm()
     try:
         h = _adv.CreateServiceW(scm, SERVICE_NAME, DISPLAY_NAME, SERVICE_ALL_ACCESS, SERVICE_WIN32_OWN_PROCESS,
-                                SERVICE_AUTO_START, SERVICE_ERROR_NORMAL, service_command_line(sids),
+                                SERVICE_AUTO_START, SERVICE_ERROR_NORMAL, service_command_line(sids, exe_path),
                                 None, None, None, None, None)
         if not h:
             raise OSError(ctypes.get_last_error(), "CreateService failed")

@@ -2,10 +2,39 @@
 
 from __future__ import annotations
 
+import os
+import re
 import zipfile
 import xml.etree.ElementTree as ET
+from .model import Image, Run
 
 MAX_PART = 64 << 20
+MAX_EMBED_IMAGE = 8 << 20
+TRUNCATED_NOTE = "document truncated"
+
+
+def truncated_note() -> str:
+    return TRUNCATED_NOTE
+
+
+def style_run(base: Run, **kw) -> Run:
+    d = dict(base.__dict__)
+    d.update(kw)
+    return Run(**d)
+
+
+def load_local_image(src: str, base_dir: str) -> Image | None:
+    if not src or (re.match(r"^[a-z][a-z0-9+.-]*:", src, re.I) and not re.match(r"^file:", src, re.I)):
+        return None
+    path = src[7:] if src.lower().startswith("file:///") else src
+    path = os.path.normpath(os.path.join(base_dir, path.replace("/", os.sep)))
+    try:
+        if os.path.getsize(path) > MAX_EMBED_IMAGE:
+            return None
+        with open(path, "rb") as f:
+            return Image(f.read())
+    except OSError:
+        return None
 
 
 def read_zip_part(zf: zipfile.ZipFile, name: str) -> bytes:
@@ -88,8 +117,6 @@ def hex_color(s: str | None) -> str | None:
 
 
 def natural_key(s: str) -> list:
-    import re
-
     return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", s)]
 
 

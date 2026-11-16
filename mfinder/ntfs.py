@@ -1,8 +1,8 @@
 """NTFS fast indexing: MFT enumeration and USN change-journal monitoring.
 
 Both need a volume handle (``\\\\.\\C:``), which Windows only grants to
-administrators. Everything solves this with a service; here the process itself
-must be elevated, and callers fall back to :mod:`scanner` on ``PermissionError``.
+administrators. A background service or elevated process can open the volume,
+and callers fall back to :mod:`scanner` on ``PermissionError``.
 """
 
 from __future__ import annotations
@@ -391,7 +391,7 @@ def apply_usn_record(index: Index, vol: int, rec: tuple, excludes: Optional[Excl
         ):
             if existing is not None:
                 index.invalidate_meta(existing)
-                index.rev += 1
+                index.touch_meta()
                 return True
     return False
 

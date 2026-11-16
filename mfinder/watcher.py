@@ -70,12 +70,12 @@ class ChangeApplier:
                 if existing is None:
                     return False
                 idx.invalidate_meta(existing)
-                idx.touch()
+                idx.touch_meta()
                 return True
             if action in (ACTION_ADDED, ACTION_RENAMED_NEW):
                 if existing is not None:
                     idx.invalidate_meta(existing)
-                    idx.touch()
+                    idx.touch_meta()
                     return True
                 return self._add(full)
         return False

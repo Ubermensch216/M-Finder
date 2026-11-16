@@ -1,11 +1,9 @@
-"""Build distributable executables with PyInstaller.
+"""Build distributable standalone executable with PyInstaller.
 
-    python packaging/build_exe.py            # onefile (dist/M-Finder.exe only)
-    python packaging/build_exe.py --onefile  # only dist/M-Finder.exe
-    python packaging/build_exe.py --onedir   # only dist/M-Finder/ (+ zip)
+    python packaging/build_exe.py            # builds dist/M-Finder.exe (single portable file)
+    python packaging/build_exe.py --onedir   # optional folder build dist/M-Finder/ (+ zip)
 
-Output: dist/M-Finder.exe (single file, portable). Pass --onedir to also build
-dist/M-Finder/ and dist/M-Finder-<ver>.zip for folder deployment.
+Output: dist/M-Finder.exe (single self-contained executable; no Python or extra files needed).
 Requires:  pip install pyinstaller
 """
 
@@ -25,9 +23,13 @@ sys.path.insert(0, ROOT)
 from mfinder import __version__  # noqa: E402
 from mfinder.tray import make_icon_png  # noqa: E402
 
-# Installed in many Python environments, never used by M-Finder; PyInstaller would otherwise bundle them.
-HEAVY = ["numpy", "scipy", "pandas", "llvmlite", "numba", "PIL", "cryptography", "lxml", "matplotlib", "IPython",
-         "sympy", "cv2", "torch", "tensorflow", "uharfbuzz", "pytest", "jedi", "docutils", "sphinx"]
+# Installed in many Python environments or stdlib modules never used by M-Finder; exclude them to keep the exe small and fast to unpack.
+HEAVY = [
+    "numpy", "scipy", "pandas", "llvmlite", "numba", "PIL", "cryptography", "lxml", "matplotlib", "IPython",
+    "sympy", "cv2", "torch", "tensorflow", "uharfbuzz", "pytest", "jedi", "docutils", "sphinx",
+    "fontTools", "brotli", "zopfli", "ssl", "_ssl", "asyncio", "_asyncio", "_overlapped",
+    "multiprocessing", "_multiprocessing", "sqlite3", "_sqlite3", "xmlrpc",
+]
 
 BUILD = os.path.join(ROOT, "build")
 DIST = os.path.join(ROOT, "dist")
@@ -67,18 +69,120 @@ def write_version_file(path: str) -> None:
         f.write(text)
 
 
+def write_spec(spec_path: str, mode: str, icon: str, version: str) -> None:
+    entry = os.path.join(ROOT, "packaging", "entry.py")
+    locales = os.path.join(ROOT, "mfinder", "locales")
+    excludes = ["unittest", "pydoc", "setuptools", "pip", "test"] + HEAVY
+    keep_enc = {"ascii.enc", "utf-8.enc", "iso8859-1.enc", "cp949.enc", "cp1252.enc", "unicode.enc"}
+    spec = f"""# -*- mode: python ; coding: utf-8 -*-
+a = Analysis(
+    [{entry!r}],
+    pathex=[{ROOT!r}],
+    binaries=[],
+    datas=[({locales!r}, 'mfinder/locales')],
+    hiddenimports=[],
+    hookspath=[],
+    hooksconfig={{}},
+    runtime_hooks=[],
+    excludes={excludes!r},
+    noarchive=False,
+    optimize=0,
+)
+
+_DROP_DATA_PREFIXES = (
+    '_tcl_data/tzdata/',
+    '_tcl_data/msgs/',
+    '_tk_data/msgs/',
+    '_tk_data/images/',
+    '_tcl_data/http1.0/',
+    '_tcl_data/opt0.4/',
+    'tcl8/',
+)
+_KEEP_ENC = {keep_enc!r}
+
+def _keep_data(item):
+    dest = item[0].replace('\\\\', '/')
+    if dest.startswith(_DROP_DATA_PREFIXES):
+        return False
+    if dest.startswith('_tcl_data/encoding/'):
+        return dest.rsplit('/', 1)[-1] in _KEEP_ENC
+    return True
+
+a.datas = [x for x in a.datas if _keep_data(x)]
+
+_DROP_BINS = {{'libssl-3.dll', 'sqlite3.dll'}}
+a.binaries = [x for x in a.binaries if x[0].replace('\\\\', '/').rsplit('/', 1)[-1].lower() not in _DROP_BINS]
+
+pyz = PYZ(a.pure)
+"""
+    if mode == "onefile":
+        spec += f"""
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.datas,
+    [],
+    name='M-Finder',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    version={version!r},
+    icon=[{icon!r}],
+)
+"""
+    else:
+        spec += f"""
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name='M-Finder',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    version={version!r},
+    icon=[{icon!r}],
+)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='M-Finder',
+)
+"""
+    os.makedirs(os.path.dirname(spec_path), exist_ok=True)
+    with open(spec_path, "w", encoding="utf-8") as f:
+        f.write(spec)
+
+
 def run_pyinstaller(mode: str, icon: str, version: str) -> None:
-    sep = ";" if os.name == "nt" else ":"
+    work = os.path.join(BUILD, mode)
+    spec_path = os.path.join(work, "M-Finder.spec")
+    write_spec(spec_path, mode, icon, version)
     cmd = [
-        sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--noconsole", f"--{mode}",
-        "--name", "M-Finder", "--icon", icon, "--version-file", version,
-        "--add-data", f"{os.path.join(ROOT, 'mfinder', 'locales')}{sep}mfinder/locales",
-        "--distpath", DIST, "--workpath", os.path.join(BUILD, mode), "--specpath", os.path.join(BUILD, mode),
-        "--paths", ROOT,
-        "--exclude-module", "unittest", "--exclude-module", "pydoc", "--exclude-module", "setuptools",
-        "--exclude-module", "pip", "--exclude-module", "test",  # distutils must stay: pymupdf imports it
-        *[a for m in HEAVY for a in ("--exclude-module", m)],
-        os.path.join(ROOT, "packaging", "entry.py"),
+        sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
+        "--distpath", DIST, "--workpath", work, spec_path,
     ]
     print("+", " ".join(cmd))
     subprocess.run(cmd, check=True, cwd=ROOT)
@@ -120,6 +224,7 @@ def main() -> int:
         outputs.append(exe)
     for path in outputs:
         print(f"{os.path.getsize(path) / 1e6:7.1f} MB  {path}")
+    shutil.rmtree(BUILD, ignore_errors=True)
     return 0
 
 

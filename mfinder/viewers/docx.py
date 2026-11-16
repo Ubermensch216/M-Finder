@@ -17,7 +17,6 @@ NS_V = "{urn:schemas-microsoft-com:vml}"
 NS_MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
 
 MAX_BLOCKS = 4000
-MAX_IMAGE = 8 << 20
 HIGHLIGHT = {
     "yellow": "#ffff00", "green": "#00ff00", "cyan": "#00ffff", "magenta": "#ff00ff", "blue": "#0000ff",
     "red": "#ff0000", "darkBlue": "#000080", "darkCyan": "#008080", "darkGreen": "#008000",
@@ -264,7 +263,7 @@ class _Reader:
         if not ent or ent[0] != "int" or ent[1] not in self.zf.namelist():
             return None
         info = self.zf.getinfo(ent[1])
-        if info.file_size > MAX_IMAGE:
+        if info.file_size > C.MAX_EMBED_IMAGE:
             return None
         return Image(C.read_zip_part(self.zf, ent[1]), width, height)
 
@@ -509,5 +508,5 @@ def read(path: str) -> Doc:
         blocks = rd.container(body)
     doc = Doc(blocks=blocks, base_size=rd.base_size or 10.0, font=rd.default_font)
     if rd.truncated:
-        doc.note = "document truncated"
+        doc.note = C.truncated_note()
     return doc

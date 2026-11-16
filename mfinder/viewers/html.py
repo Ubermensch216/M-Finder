@@ -23,24 +23,8 @@ _BLOCK_TAGS = {
 _VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
 
 
-def _style(base: Run, **kw) -> Run:
-    d = dict(base.__dict__)
-    d.update(kw)
-    return Run(**d)
-
-
-def _load_image(src: str, base_dir: str) -> Image | None:
-    if not src or (re.match(r"^[a-z][a-z0-9+.-]*:", src, re.I) and not re.match(r"^file:", src, re.I)):
-        return None
-    path = src[7:] if src.lower().startswith("file:///") else src
-    path = os.path.normpath(os.path.join(base_dir, path.replace("/", os.sep)))
-    try:
-        if os.path.getsize(path) > 8 << 20:
-            return None
-        with open(path, "rb") as f:
-            return Image(f.read())
-    except OSError:
-        return None
+_style = C.style_run
+_load_image = C.load_local_image
 
 
 class _DocBuilder(HTMLParser):

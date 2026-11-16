@@ -10,7 +10,6 @@ from .model import Cell, Doc, Image, Para, Run, Table
 
 L = C.local
 MAX_BLOCKS = 4000
-MAX_IMAGE = 8 << 20
 ALIGN = {"JUSTIFY": "justify", "LEFT": "left", "RIGHT": "right", "CENTER": "center",
          "DISTRIBUTE": "justify", "DISTRIBUTE_SPACE": "justify"}
 STRIKE_SHAPES = frozenset({
@@ -114,7 +113,7 @@ class _Reader:
         if not ref or ref not in self.bin:
             return None
         name = self.bin[ref]
-        if self.zf.getinfo(name).file_size > MAX_IMAGE:
+        if self.zf.getinfo(name).file_size > C.MAX_EMBED_IMAGE:
             return None
         w = h = None
         sz = next(iter(C.find_all(el, "curSz")), None) or next(iter(C.find_all(el, "sz")), None)
@@ -233,4 +232,4 @@ def read(path: str) -> Doc:
             blocks.extend(rd.section(C.parse_xml(C.read_zip_part(zf, n))))
             if rd.truncated:
                 break
-    return Doc(blocks=blocks, base_size=10.0, note="document truncated" if rd.truncated else "")
+    return Doc(blocks=blocks, base_size=10.0, note=C.truncated_note() if rd.truncated else "")

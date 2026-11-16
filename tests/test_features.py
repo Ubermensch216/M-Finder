@@ -14,7 +14,7 @@ from test_core import make_tree
 
 from mfinder import filelist, i18n, ipc, mftparse, query, service, theme, tray, watcher
 from mfinder.engine import Engine
-from mfinder.index import FILE_ATTRIBUTE_DIRECTORY, Index
+from mfinder.index import Index
 from mfinder.scanner import Excludes, scan_folder
 from mfinder.settings import Settings, default_filters
 
@@ -231,7 +231,8 @@ class FileListTests(unittest.TestCase):
             ids = query.search(idx, "", filter_text="")
             efu = os.path.join(d, "out.efu")
             self.assertEqual(filelist.export_results(idx, ids, efu), len(ids))
-            head = open(efu, encoding="utf-8-sig").readline().strip()
+            with open(efu, encoding="utf-8-sig") as f:
+                head = f.readline().strip()
             self.assertEqual(head, "Filename,Size,Date Modified,Date Created,Attributes")
             new = Index()
             filelist.import_filelist(new, efu)
@@ -399,9 +400,12 @@ class UiSupportTests(unittest.TestCase):
         import ast
         import glob
 
-        keys = set(json.load(open(os.path.join(os.path.dirname(__file__), "..", "mfinder", "locales", "ko.json"), encoding="utf-8")))
+        with open(os.path.join(os.path.dirname(__file__), "..", "mfinder", "locales", "ko.json"), encoding="utf-8") as fh:
+            keys = set(json.load(fh))
         for f in glob.glob(os.path.join(os.path.dirname(__file__), "..", "mfinder", "*.py")):
-            for n in ast.walk(ast.parse(open(f, encoding="utf-8").read())):
+            with open(f, encoding="utf-8") as fh:
+                src = fh.read()
+            for n in ast.walk(ast.parse(src)):
                 if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "_" and n.args:
                     try:
                         v = ast.literal_eval(n.args[0])
@@ -437,7 +441,8 @@ class UiSupportTests(unittest.TestCase):
         self.assertEqual(png[:8], b"\x89PNG\r\n\x1a\n")
         with tempfile.TemporaryDirectory() as d:
             p = tray.ensure_icon_file(d)
-            self.assertEqual(open(p, "rb").read(4), b"\x00\x00\x01\x00")
+            with open(p, "rb") as fh:
+                self.assertEqual(fh.read(4), b"\x00\x00\x01\x00")
 
     def test_settings_roundtrip_with_new_fields(self):
         with tempfile.TemporaryDirectory() as d:

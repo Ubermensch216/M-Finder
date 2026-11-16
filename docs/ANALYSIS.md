@@ -1,75 +1,34 @@
-# Everything 1.5.0.1416b — analysis notes
+# M-Finder 1.0 — Architecture & Design Notes
 
-Target: `C:\Program Files\Everything` (`Everything.exe` 5,118,632 bytes, SHA-256
-`1171a761…c637c`, PE, voidtools). Tooling: [REA](https://github.com/morluto/rea)
-`rea-agents` 6.8.0 CLI (`inspect-artifact`, `inspect-pe-imports`,
-`inspect-pe-resources`, `inspect-desktop-application`), run statically — the
-program was never executed or modified.
+**M-Finder** is a high-performance desktop file and document search engine for Windows, featuring raw NTFS volume indexing (`$MFT` and USN Change Journal), structured document content search, and native format-aware file previews.
 
-## What the analysis could and could not establish
+## System Architecture
 
-| Source | Result |
-|---|---|
-| REA PE import table (477 functions, 9 DLLs) | Strong evidence of architecture — see below |
-| `Everything.ini` | Feature switches (IPC, pipe IPC, service, context menu, export, ETP…) |
-| `Everything.lng` | A bzip2 container of per-language string tables; the decoded UI strings name the features and error paths (USN journal, database, ETP/HTTP servers, folder indexes, exclude rules, sort confirmation) |
-| Disassembly / decompilation | **Not available.** REA needs Hopper, Ghidra or IDA for native pseudocode and none is installed here. `Everything.exe` also keeps almost no plaintext strings. Nothing below is claimed from decompiled code. |
+* **Indexing (`ntfs.py`, `mftparse.py`, `scanner.py`)**:
+  * Enumerates fixed NTFS volumes via `CreateFileW` + `DeviceIoControl` (`FSCTL_ENUM_USN_DATA`) and reads `$MFT` records directly (`$STANDARD_INFORMATION`, `$DATA`, runlists) to populate file sizes and timestamps without per-file `stat()` calls.
+  * Provides a directory-walk fallback (`os.scandir` / `FindFirstFileW`) for non-NTFS drives and custom folder roots.
+* **Live Change Monitoring (`ntfs.py`, `watcher.py`)**:
+  * Tracks volume changes in real time via the NTFS USN Change Journal (`FSCTL_READ_USN_JOURNAL`), resuming from the saved USN position on startup.
+  * Monitors folder roots and non-NTFS volumes using `ReadDirectoryChangesW`.
+* **Privilege Separation (`service.py`, `winshell.py`)**:
+  * Supports running elevated (`Restart as Administrator`) or delegating raw volume access to the optional `MFinderSvc` Windows service so the GUI can run as a standard user.
+* **In-Memory & On-Disk Database (`index.py`)**:
+  * Uses a compact struct-of-arrays layout (`Index`) pre-ordered by `(roots, folders, files)` (`sort_in_place()`) with lazy `frn_maps`, separate structural (`rev`) vs metadata (`meta_rev`) revisions, background folder size computation (`compute_folder_sizes`), and atomic compressed persistence (`fileindex.db`).
+* **Query Engine (`query.py`)**:
+  * Compiles boolean queries (`AND`, `OR`, `NOT`, `< >` grouping), wildcards, regular expressions, path matching, metadata ranges (`size:`, `dm:`, `dc:`, `da:`, `len:`, `depth:`, `attrib:`), type macros (`audio:`, `pic:`, `doc:`, `video:`, `zip:`, `exe:`), and on-demand file content searches (`content:`).
+* **Format-Aware Preview & Content Extraction (`preview.py`, `preview_pane.py`, `viewers/`)**:
+  * Extracts text and renders formatted documents directly in the preview pane:
+    * **HWP (`.hwp`) & HWPX (`.hwpx`)**: Built-in OLE/OWPML parsers for paragraphs, character styles, merged tables, and embedded images, plus optional page-accurate rendering via `rhwp`.
+    * **Office Open XML (`.docx`, `.xlsx`, `.pptx`) & ODF (`.odt`, `.ods`, `.odp`)**: Styled Word documents, interactive Excel spreadsheet grids with number/date formatting, and presentation text extraction.
+    * **PDF (`.pdf`) & Images**: Multi-page PDF rendering with hit highlighting and image scaling via `PyMuPDF` / `Pillow` / Tk.
+    * **Markdown (`.md`), HTML (`.html`/`.htm`), Plain Text**: Rich formatting and toggleable HTML page/code views.
+* **IPC & Network Servers (`ipc.py`, `queryipc.py`, `httpserver.py`, `etp.py`)**:
+  * Per-user SID-ACL protected Named Pipe IPC for CLI queries (`m-finder search`) and single-instance window reuse.
+  * Built-in read-only HTTP server (HTML & JSON) and passive-mode FTP/ETP server.
 
-Where behaviour is not evidenced by the binary, this project follows
-Everything's publicly documented search syntax and standard NTFS APIs. It is a
-clean-room, functionally equivalent implementation: no Everything code or
-assets were copied.
+## Module Mapping
 
-## Architecture evidenced by the imports
-
-* **Indexing**: `CreateFileW` + `DeviceIoControl` (volume handle, USN/MFT
-  control codes), `GetVolumeInformationW`, `GetDriveTypeW`,
-  `GetLogicalDriveStringsW`, `GetDiskFreeSpace*` → enumerate fixed NTFS
-  volumes and read the MFT / USN journal. `FindFirstFileW/FindNextFileW` and
-  `FindFirstChangeNotificationW` → a folder-walk fallback for non-NTFS and
-  folder indexes.
-* **Privilege handling**: `OpenProcessToken`, `GetTokenInformation`,
-  `LookupPrivilegeValueW`, `AdjustTokenPrivileges` plus the service APIs
-  (`CreateServiceW`, `StartServiceW`, `ControlService`,
-  `RegisterServiceCtrlHandlerW`, `StartServiceCtrlDispatcherW`,
-  `SetServiceObjectSecurity`) → consistent with a service doing the raw-volume
-  work for an unelevated UI (`allow_everything_service`, `index_as_admin` in the
-  ini); the actual split of duties was not verified without a decompiler.
-* **IPC**: `CreateNamedPipeW`, `ConnectNamedPipe`, `WaitNamedPipeW`,
-  `FindWindowW`/window messages → the SDK/`es.exe` interface
-  (`allow_ipc`, `allow_ipc_pipe`, `allow_window_message_filter_ipc`).
-* **UI/shell**: `comctl32` (list-view, image lists), `Shell_NotifyIconW`
-  (tray), `RegisterHotKey` (global "new window" hotkey), `SHFileOperationW`
-  (delete/rename/copy/move), `ShellExecuteExW`, `SHBrowseForFolderW`,
-  `SHGetFileInfoW` (icons), clipboard + `DragAcceptFiles` (copy/paste/drag-drop),
-  `GetOpenFileNameW`/`GetSaveFileNameW` (export), `SetWindowsHookExW`.
-* **Networking** (from strings; the import table has no Winsock functions, so
-  it is probably loaded at run time — not verified): ETP/FTP and HTTP servers
-  with port, user/password, logging, "allow download".
-
-## Behaviour taken from the decoded UI strings
-
-* Database: `Everything.db`, written to `Everything.db.tmp` then replaced;
-  explicit errors for *does not exist / not a valid database / unsupported
-  version / corrupt / out of date*. → `fileindex.db`, atomic replace, same
-  error classes (`index.DatabaseError`).
-* Indexing phases: create/delete/open **USN Journal**, sort folder indexes
-  (FRN → pointer conversion, removing sparse folders, sorting names), "Saving to
-  disk…".
-* Per-volume options: include in database, monitor changes, USN journal
-  maximum size / allocation delta.
-* Folder indexes and an ordered include/exclude rule list (folder, file,
-  wildcard filter); "exclude hidden / system".
-* Search toggles: match case (Ctrl+I), whole word (Ctrl+B), match path
-  (Ctrl+U), regex (Ctrl+R) — default off.
-* Columns Name / Path / Size / Date Modified; export of results; "confirm
-  large sort" dialog; "confirm opening N files"; zoom in/out/normal; status bar
-  showing object and selection counts; context menu (Open, Open Path, Copy
-  Path/Name/Full Path, Delete).
-
-## Mapping to this implementation
-
-| Everything feature | M-Finder module |
+| Feature Area | M-Finder Module (`mfinder/`) |
 |---|---|
 | MFT enumeration (`FSCTL_ENUM_USN_DATA`) | `ntfs.index_volume` |
 | Size / dates straight from `$MFT` | `mftparse` (record fixups, `$STANDARD_INFORMATION`, `$DATA`, runlists) |
@@ -77,40 +36,24 @@ assets were copied.
 | Folder / non-NTFS indexing and live updates | `scanner`, `watcher` (`ReadDirectoryChangesW`) |
 | Exclude hidden/system/folders/wildcards | `scanner.Excludes` (applied in every indexer) |
 | Compact index, sorted views, folder sizes | `index.Index` (struct-of-arrays), `query.sort_results`, `Index.compute_folder_sizes` |
-| `Everything.db` | `Index.save` / `Index.load` (zlib, atomic, format v2) |
+| On-disk index database (`fileindex.db`) | `Index.save` / `Index.load` (zlib, atomic, format v2) |
 | Search syntax incl. `dm:` `dc:` `da:` `content:` | `query.py` |
-| File lists (`.efu`) as index sources, export | `filelist.py` |
+| File lists (`.efu`, `.csv`, `.txt`) import & export | `filelist.py` |
 | Filters and bookmarks | `settings.filters/bookmarks`, `Engine.search`, `gui.SearchWindow` |
 | Service for unelevated UI (privileged volume access) | `service.py` (`VolumeProxy`, `ServiceVolume`, SCM install/control) |
-| Named-pipe IPC (SDK / `es.exe` role) | `ipc.py`, `queryipc.py`, `mfinder search` |
+| Named-pipe IPC (`m-finder search`) | `ipc.py`, `queryipc.py` |
 | Tray icon, global hotkey, run in background, run at startup | `tray.py`, `winshell.py`, `gui.Controller` |
 | Multiple search windows sharing one index | `gui.Controller` / `gui.SearchWindow` |
-| ETP/FTP server | `etp.py` |
+| FTP/ETP server | `etp.py` |
 | HTTP server | `httpserver.py` (read-only) |
 | Themes, language packs | `theme.py`, `i18n.py` + `locales/*.json` |
 | Elevation helper | `winshell.relaunch_as_admin` |
+| Rich file preview pane & structured content extraction | `preview.py`, `preview_pane.py`, `viewers/` (shared viewer helpers in `viewers/common.py`) |
+| Standalone executable packaging | `packaging/build_exe.py`, `packaging/entry.py` (PyInstaller `--onefile` default to `dist/M-Finder.exe` with trimmed Tcl/Tk & module exclusions, optional `--onedir`) |
 
-## Deliberate differences / remaining gaps
+## Design & Security Notes
 
-* **Service location rule.** A SYSTEM service that runs files from a
-  user-writable folder is a privilege-escalation hole, so `service install`
-  refuses unless Python and this package sit under Program Files/Windows
-  (override: `--unsafe-allow-user-paths`). The service exposes only journal/MFT
-  names and `$MFT`-parsed metadata — never raw disk bytes — to fixed local
-  drives, and only to the SIDs it was installed for. **The SCM install/start/stop
-  code path has not been exercised on a real machine** (the proxy logic itself
-  is tested through the same pipe server in console mode).
-* **IPC is not binary-compatible with Everything's SDK.** Everything uses
-  `WM_COPYDATA` window messages and its own pipe protocol; programs written for
-  the Everything SDK will not talk to M-Finder. M-Finder has its own
-  per-user pipe protocol (`queryipc.py`) and `mfinder search`.
-* **ETP.** The server speaks plain FTP (passive mode, read-only) plus
-  `SITE SEARCH <query>`; Everything's ETP wire extensions were not observable
-  in the binary analysis, so Everything's own ETP client may not be able to
-  search it. There is no ETP *client* inside the GUI.
-* **Content search** reads files on demand (UTF-8, UTF-16LE, ANSI; ASCII case
-  folding), with a size cap; it is a scan, not an index.
-* **Folder size** is recomputed in the background after changes (every ~30 s),
-  not incrementally per event.
-* **Not implemented:** custom column sets, file-type icons, drag and drop,
-  rename in place, check-for-updates, a bundled installer / `.exe`.
+* **Service location rule**: A SYSTEM service running code from a user-writable folder is a privilege-escalation risk. When running as a standalone `M-Finder.exe`, `service install` automatically stages a copy to `C:\Program Files\M-Finder\M-Finder.exe` (`_stage_frozen_exe`). For non-frozen source runs, `service install` refuses unless both Python and the `mfinder` package reside under `Program Files` or `Windows` (override: `--unsafe-allow-user-paths`). The service exposes only journal/MFT names and `$MFT`-parsed metadata — never raw disk bytes — for fixed local drives and the installed SIDs.
+* **Per-user IPC isolation**: Named pipes use an explicit SDDL DACL restricted to the current user's SID and reject remote network clients.
+* **Content search**: Reads files on demand (UTF-8, UTF-16LE, ANSI, plus `.hwp`, `.hwpx`, `.docx`, `.xlsx`, `.pptx`, `.odt`, `.ods`, `.odp`, and `.pdf`) up to a configurable size cap (`content_max_mb`).
+* **Folder sizes**: Recomputed in the background after index changes (~30 s interval).

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import queue
-import subprocess
 import sys
 import threading
 import time
@@ -56,6 +55,7 @@ class VirtualList(tk.Frame):
         s = app.engine.settings
         self.font = tkfont.Font(family="Segoe UI", size=s.font_size)
         self.rowh = self.font.metrics("linespace") + 4
+        self._init_font_metrics()
         self.ids: list[int] = []
         self.first = 0
         self.sel: set[int] = set()
@@ -63,6 +63,14 @@ class VirtualList(tk.Frame):
         self.anchor = -1
         self._resize = None
         self._dragged = False
+        self._redraw_after = None
+        self._meta_after = None
+        self._last_redraw = 0.0
+        self.last_scroll_time = 0.0
+        self._wheel_rem = 0
+        self._bg = COLORS["bg"]
+        self._dir_cache_key = (0, -1, 0)
+        self._dir_fit_cache: dict[int, str] = {}
 
         self.header = tk.Canvas(self, height=self.rowh + 2, bg=COLORS["header_bg"], highlightthickness=0)
         self.body = tk.Canvas(self, bg=COLORS["bg"], highlightthickness=0, takefocus=True)
@@ -98,6 +106,47 @@ class VirtualList(tk.Frame):
 
     # ---- data -----------------------------------------------------------
 
+    def _init_font_metrics(self) -> None:
+        self._ascii_w = tuple(self.font.measure(chr(c)) if 32 <= c < 127 else 7 for c in range(128))
+        self._max_ascii_w = max(self._ascii_w[32:127])
+        self._cjk_w = max(self.font.measure("가"), self.font.measure("W"))
+        self._max_char_w = max(self._max_ascii_w, self._cjk_w)
+        self._ell_w = self.font.measure("…")
+        self._wide_w: dict[str, int] = {}
+        self._fit_cache: dict[tuple[str, int], str] = {}
+        self._dir_cache_key = (0, -1, 0)
+        self._dir_fit_cache = {}
+
+    def _ensure_tcl_draw(self) -> None:
+        if self.tk.eval("info procs _mf_draw"):
+            return
+        self.tk.eval("""
+proc _mf_draw {c fnt fg rowh w x_path x_size x_mtime x_ext rows} {
+    $c delete all
+    set w1 [expr {$w - 1}]
+    set yoff [expr {$rowh - 4}]
+    set tyoff [expr {$rowh / 2}]
+    foreach r $rows {
+        lassign $r y selbg cur iconcol nm ptxt sz mt ftype
+        set y1 [expr {$y + 4}]
+        set y2 [expr {$y + $yoff}]
+        set ty [expr {$y + $tyoff}]
+        if {$selbg ne ""} {
+            $c create rectangle 0 $y $w [expr {$y + $rowh}] -fill $selbg -outline ""
+        }
+        if {$cur ne ""} {
+            $c create rectangle 0 $y $w1 [expr {$y + $rowh - 1}] -outline $cur -dash {1 2}
+        }
+        $c create rectangle 4 $y1 14 $y2 -fill $iconcol -outline ""
+        $c create text 20 $ty -anchor w -font $fnt -fill $fg -text $nm
+        $c create text $x_path $ty -anchor w -font $fnt -fill $fg -text $ptxt
+        $c create text $x_size $ty -anchor e -font $fnt -fill $fg -text $sz
+        $c create text $x_mtime $ty -anchor w -font $fnt -fill $fg -text $mt
+        $c create text $x_ext $ty -anchor w -font $fnt -fill $fg -text $ftype
+    }
+}
+""")
+
     def widths(self) -> dict:
         w = self.app.engine.settings.column_widths
         if "ext" not in w:
@@ -118,7 +167,11 @@ class VirtualList(tk.Frame):
         self.anchor = self.cursor
         self._clamp()
         self.redraw()
-        self.app.selection_changed()
+        new_sel_ids = {ids[p] for p in self.sel if p < len(ids)} if self.sel else set()
+        if not keep_view or new_sel_ids != (keep_ids or set()):
+            self.app.selection_changed()
+        else:
+            self.app.update_left_label()
 
     def selected_ids(self) -> list[int]:
         return [self.ids[p] for p in sorted(self.sel) if p < len(self.ids)]
@@ -126,6 +179,7 @@ class VirtualList(tk.Frame):
     def set_font_size(self, size: int) -> None:
         self.font.configure(size=size)
         self.rowh = self.font.metrics("linespace") + 4
+        self._init_font_metrics()
         self.header.configure(height=self.rowh + 2)
         self.draw_header()
         self.redraw()
@@ -139,16 +193,49 @@ class VirtualList(tk.Frame):
         self.first = max(0, min(self.first, max(0, len(self.ids) - self._page())))
 
     def _fit(self, text: str, width: int) -> str:
-        if width <= 8 or self.font.measure(text) <= width:
+        if width <= 8 or not text:
             return text
-        lo, hi = 0, len(text)
-        while lo < hi:
-            mid = (lo + hi + 1) // 2
-            if self.font.measure(text[:mid] + "…") <= width:
-                lo = mid
+        n = len(text)
+        if text.isascii():
+            if n * self._max_ascii_w <= width:
+                return text
+        elif n * self._max_char_w <= width:
+            return text
+        key = (text, width)
+        cached = self._fit_cache.get(key)
+        if cached is not None:
+            return cached
+        avail = width - self._ell_w
+        acc = 0
+        cut = 0
+        cut_found = False
+        aw = self._ascii_w
+        ww = self._wide_w
+        for idx_ch, ch in enumerate(text):
+            o = ord(ch)
+            if o < 128:
+                w = aw[o]
             else:
-                hi = mid - 1
-        return text[:lo] + "…"
+                w = ww.get(ch)
+                if w is None:
+                    w = self.font.measure(ch)
+                    if len(ww) > 8192:
+                        ww.clear()
+                    ww[ch] = w
+            acc += w
+            if not cut_found and acc > avail:
+                cut = idx_ch
+                cut_found = True
+            if acc > width:
+                res = text[:cut] + "…"
+                if len(self._fit_cache) > 16384:
+                    self._fit_cache.clear()
+                self._fit_cache[key] = res
+                return res
+        if len(self._fit_cache) > 16384:
+            self._fit_cache.clear()
+        self._fit_cache[key] = text
+        return text
 
     def draw_header(self) -> None:
         h = self.header
@@ -166,49 +253,123 @@ class VirtualList(tk.Frame):
             h.create_line(x, 2, x, self.rowh, fill=COLORS["line"])
         h.create_line(0, self.rowh + 1, 4000, self.rowh + 1, fill=COLORS["line"])
 
+    def request_redraw(self) -> None:
+        if time.perf_counter() - self._last_redraw >= 0.012:
+            self.redraw()
+        elif self._redraw_after is None:
+            self._redraw_after = self.after(10, self._flush_redraw)
+
+    def _flush_redraw(self) -> None:
+        self._redraw_after = None
+        self.redraw()
+
+    def _schedule_visible_meta(self) -> None:
+        if self._meta_after is not None:
+            self.after_cancel(self._meta_after)
+        self._meta_after = self.after(80, self._fetch_visible_meta)
+
+    def _fetch_visible_meta(self) -> None:
+        self._meta_after = None
+        engine = self.app.engine
+        if engine.filling or engine.building:
+            return
+        idx = engine.index
+        nvis = self.body.winfo_height() // self.rowh + 1
+        vis_ids = [i for i in self.ids[self.first : self.first + nvis] if i < len(idx) and idx.mtime[i] == 0.0]
+        if not vis_ids:
+            return
+
+        def work() -> None:
+            for i in vis_ids:
+                if i < len(idx) and idx.mtime[i] == 0.0:
+                    idx.meta(i)
+            idx.touch_meta()
+
+        threading.Thread(target=work, daemon=True).start()
+
     def redraw(self) -> None:
+        if self._redraw_after is not None:
+            self.after_cancel(self._redraw_after)
+            self._redraw_after = None
+        self._last_redraw = time.perf_counter()
         c = self.body
-        c.delete("all")
-        c.configure(bg=COLORS["bg"])
+        if self._bg != COLORS["bg"]:
+            self._bg = COLORS["bg"]
+            c.configure(bg=self._bg)
         w, h = c.winfo_width(), c.winfo_height()
         engine = self.app.engine
         idx = engine.index
+        n_idx = len(idx.names)
         s = engine.settings
         show_dir_sizes = s.show_folder_sizes and idx.folder_sizes_ready
         total = len(self.ids)
         widths = self.widths()
+        wn, wp, ws, wm, we = widths["name"], widths["path"], widths["size"], widths["mtime"], widths["ext"]
+        name_w = wn - 24
+        path_w = wp - 10
+        ext_w = we - 10
+        x_path = wn + 6
+        x_size = wn + wp + ws - 8
+        x_mtime = wn + wp + ws + 6
+        x_ext = wn + wp + ws + wm + 6
+        cache_key = (id(idx), idx.rev, path_w)
+        if self._dir_cache_key != cache_key:
+            self._dir_cache_key = cache_key
+            self._dir_fit_cache = {}
+        dir_fit = self._dir_fit_cache
+        if len(dir_fit) > 32768:
+            dir_fit.clear()
         focus = c.focus_get() is c
-        nvis = h // self.rowh + 1
+        rowh = self.rowh
+        nvis = h // rowh + 1
+        sel = self.sel
+        cursor = self.cursor
         sel_bg = COLORS["sel"] if focus else COLORS["sel_inactive"]
+        dim_col = COLORS["dim"] if focus else ""
+        fg = COLORS["fg"]
+        folder_col, file_col = COLORS["folder"], COLORS["file"]
+        folder_label = self._fit(_("Folder"), ext_w)
+        names, parent, attrs, size_arr, mtime_arr = idx.names, idx.parent, idx.attrs, idx.size, idx.mtime
+        need_meta = False
+        rows = []
+        fit = self._fit
         for r in range(nvis):
             pos = self.first + r
             if pos >= total:
                 break
             i = self.ids[pos]
-            y = r * self.rowh
-            if pos in self.sel:
-                c.create_rectangle(0, y, w, y + self.rowh, fill=sel_bg, outline="")
-            if pos == self.cursor and focus:
-                c.create_rectangle(0, y, w - 1, y + self.rowh - 1, outline=COLORS["dim"], dash=(1, 2))
-            is_dir = bool(idx.attrs[i] & FILE_ATTRIBUTE_DIRECTORY)
-            x = 0
-            ty = y + self.rowh // 2
-            c.create_rectangle(x + 4, y + 4, x + 14, y + self.rowh - 4, fill=COLORS["folder" if is_dir else "file"], outline="")
-            c.create_text(x + 20, ty, anchor="w", font=self.font, fill=COLORS["fg"], text=self._fit(idx.names[i], widths["name"] - 24))
-            x += widths["name"]
-            c.create_text(x + 6, ty, anchor="w", font=self.font, fill=COLORS["fg"], text=self._fit(idx.parent_path(i), widths["path"] - 10))
-            x += widths["path"]
-            if idx.mtime[i] == 0.0:
-                idx.meta(i)
-            size, mtime = idx.size[i], idx.mtime[i]
-            c.create_text(x + widths["size"] - 8, ty, anchor="e", font=self.font, fill=COLORS["fg"],
-                          text=(format_size(size) if show_dir_sizes else "") if is_dir else format_size(size))
-            x += widths["size"]
-            c.create_text(x + 6, ty, anchor="w", font=self.font, fill=COLORS["fg"], text=format_time(mtime))
-            x += widths["mtime"]
-            ftype = _("Folder") if is_dir else split_ext(idx.names[i]).upper()
-            c.create_text(x + 6, ty, anchor="w", font=self.font, fill=COLORS["fg"], text=self._fit(ftype, widths["ext"] - 10))
-        page = max(1, h // self.rowh)
+            if i >= n_idx:
+                continue
+            is_dir = bool(attrs[i] & FILE_ATTRIBUTE_DIRECTORY)
+            nm = names[i]
+            p = parent[i]
+            if p < 0:
+                ptxt = ""
+            else:
+                ptxt = dir_fit.get(p)
+                if ptxt is None:
+                    ptxt = fit(idx.parent_path(i), path_w)
+                    dir_fit[p] = ptxt
+            mt = mtime_arr[i]
+            if mt == 0.0:
+                need_meta = True
+            sz = size_arr[i]
+            rows.append((
+                r * rowh,
+                sel_bg if pos in sel else "",
+                dim_col if pos == cursor and focus else "",
+                folder_col if is_dir else file_col,
+                fit(nm, name_w),
+                ptxt,
+                (format_size(sz) if show_dir_sizes else "") if is_dir else format_size(sz),
+                format_time(mt),
+                folder_label if is_dir else fit(split_ext(nm).upper(), ext_w),
+            ))
+        self._ensure_tcl_draw()
+        c.tk.call("_mf_draw", c._w, self.font.name, fg, rowh, w, x_path, x_size, x_mtime, x_ext, rows)
+        if need_meta and not engine.filling:
+            self._schedule_visible_meta()
+        page = max(1, h // rowh)
         if total <= page:
             self.sb.set(0, 1)
         else:
@@ -224,12 +385,21 @@ class VirtualList(tk.Frame):
             n = int(args[1])
             self.first += n * (self._page() - 1 if args[2] == "pages" else 1)
         self._clamp()
-        self.redraw()
+        self.last_scroll_time = time.perf_counter()
+        self.request_redraw()
 
     def _wheel(self, e) -> None:
-        self.first -= int(e.delta / 120) * 3
+        self._wheel_rem += e.delta
+        steps = int(self._wheel_rem / 120)
+        if steps:
+            self._wheel_rem -= steps * 120
+        elif e.delta:
+            steps = 1 if e.delta > 0 else -1
+            self._wheel_rem = 0
+        self.first -= steps * 3
         self._clamp()
-        self.redraw()
+        self.last_scroll_time = time.perf_counter()
+        self.request_redraw()
 
     def _ensure_visible(self, pos: int) -> None:
         if pos < self.first:
@@ -365,8 +535,10 @@ class SearchWindow(tk.Toplevel):
         self.seq = 0
         self._after = None
         self.last_rev = -1
+        self.last_meta_rev = -1
         self.last_index_id = 0
         self.last_run = 0.0
+        self._last_right_state = None
         self.error = ""
         self.title("M-Finder")
         self.geometry(s.geometry)
@@ -469,6 +641,7 @@ class SearchWindow(tk.Toplevel):
         self.last_index_id = id(self.engine.index)
         self.last_run = time.time()
         rev = self.engine.index.rev
+        meta_rev = self.engine.index.meta_rev
         self._set_title()
         self.preview.highlight()
 
@@ -479,7 +652,7 @@ class SearchWindow(tk.Toplevel):
                 self.q.put(("error", seq, str(e)))
                 return
             if ids is not None:
-                self.q.put(("results", seq, ids, keep_view, rev))
+                self.q.put(("results", seq, ids, keep_view, rev, meta_rev))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -491,24 +664,43 @@ class SearchWindow(tk.Toplevel):
                     self.error = ""
                     self.list.set_ids(msg[2], keep_view=msg[3])
                     self.last_rev = msg[4]
+                    self.last_meta_rev = msg[5]
                 elif msg[0] == "error" and msg[1] == self.seq:
                     self.error = msg[2]
                     self.selection_changed()
         except queue.Empty:
             pass
         idx = self.engine.index
+        scrolling = time.perf_counter() - self.list.last_scroll_time < 0.35
         if (
             not self.engine.building
+            and not scrolling
             and (idx.rev != self.last_rev or id(idx) != self.last_index_id)
             and time.time() - self.last_run > 1.0
             and self.last_rev != -1
         ):
             self.run_search(keep_view=True)
+        elif (
+            not self.engine.building
+            and not scrolling
+            and idx.meta_rev != self.last_meta_rev
+            and self.last_rev != -1
+        ):
+            if query.sort_needs_meta(self.ctl.settings.sort_key) or query.query_needs_meta(self.var.get(), self.flags()):
+                if time.time() - self.last_run > 1.0:
+                    self.run_search(keep_view=True)
+            else:
+                self.last_meta_rev = idx.meta_rev
+                self.list.request_redraw()
         self.update_right_label()
 
     def update_right_label(self) -> None:
         e = self.engine
         idx = e.index
+        state = (e.building, e.filling, id(idx), idx.rev, e.status)
+        if state == self._last_right_state:
+            return
+        self._last_right_state = state
         if e.building:
             txt = e.status
         elif e.filling:
@@ -634,6 +826,9 @@ class SearchWindow(tk.Toplevel):
 
     def selection_changed(self) -> None:
         self._schedule_preview()
+        self.update_left_label()
+
+    def update_left_label(self) -> None:
         n, sel = len(self.list.ids), len(self.list.sel)
         if self.error:
             self.lbl_left.configure(text=self.error)
@@ -778,7 +973,7 @@ class SearchWindow(tk.Toplevel):
     def export(self) -> None:
         f = filedialog.asksaveasfilename(
             parent=self, title=_("Export results"), defaultextension=".efu",
-            filetypes=[("Everything file list", "*.efu"), ("CSV", "*.csv"), ("Text", "*.txt")],
+            filetypes=[("File list", "*.efu"), ("CSV", "*.csv"), ("Text", "*.txt")],
         )
         if not f:
             return
@@ -965,31 +1160,42 @@ class Controller:
         self.tray = None
         self.ipc = None
         self._quitting = False
+        self._startup_done = False
+        self._poll_id = None
 
-        self._start_ipc()
-        self._start_tray()
-        if headless or (minimized and self.tray is not None):
+        if headless:
             self.hidden = True
-        else:
+        elif not minimized:
             self.hidden = False
             self.new_window(query_text)
+            self.root.update_idletasks()
         threading.Thread(target=self._startup, daemon=True).start()
+        self._start_ipc()
+        self._start_tray()
+        if minimized and not headless:
+            if self.tray is not None:
+                self.hidden = True
+            else:
+                self.hidden = False
+                self.new_window(query_text)
         if settings.http_enabled:
             self.toggle_http(force=True)
         if settings.etp_enabled:
             self.toggle_etp(force=True)
-        self.root.after(100, self._poll)
+        self._poll_id = self.root.after(20, self._poll)
 
     # ---- lifecycle ---------------------------------------------------------------
 
     def _startup(self) -> None:
         e = self.engine
         if e.load():
+            self.q.put(("ready",))
+            time.sleep(0.08)
             e.start_monitors()
-            e.start_background()
+            e.start_background(delay=0.8)
         else:
-            e.rebuild()
-        self.q.put(("ready",))
+            e.rebuild(save=False)
+            self.q.put(("ready",))
 
     def _start_ipc(self) -> None:
         if not self.settings.ipc_enabled or os.name != "nt":
@@ -1044,6 +1250,7 @@ class Controller:
                 msg = self.q.get_nowait()
                 kind = msg[0]
                 if kind == "ready":
+                    self._startup_done = True
                     for w in list(self.windows):
                         w.run_search()
                 elif kind == "show":
@@ -1058,7 +1265,9 @@ class Controller:
         for w in list(self.windows):
             w.poll()
         if not self._quitting:
-            self.root.after(100, self._poll)
+            self._poll_id = self.root.after(100 if self._startup_done else 20, self._poll)
+        else:
+            self._poll_id = None
 
     def _tray_event(self, ev: str) -> None:
         if ev in ("show", "hotkey"):
@@ -1113,7 +1322,9 @@ class Controller:
         self._quitting = True
         s = self.settings
         if self.windows:
-            s.geometry = self.windows[-1].geometry()
+            last = self.windows[-1]
+            last._remember_preview_size()
+            s.geometry = last.geometry()
         for w in self.windows:
             w.cancel.set()
             try:
@@ -1124,6 +1335,12 @@ class Controller:
             self.root.update_idletasks()
         except tk.TclError:
             pass
+        if self._poll_id is not None:
+            try:
+                self.root.after_cancel(self._poll_id)
+            except tk.TclError:
+                pass
+            self._poll_id = None
         try:
             s.save()
         except OSError:
@@ -1144,7 +1361,7 @@ class Controller:
             return
 
         def work() -> None:
-            self.engine.rebuild()
+            self.engine.rebuild(save=False)
             self.q.put(("ready",))
 
         threading.Thread(target=work, daemon=True).start()
@@ -1174,32 +1391,24 @@ class Controller:
         for w in self.windows:
             w.refresh_filters()
 
-    def toggle_http(self, force: bool = False, restart: bool = False) -> None:
+    def _set_server(self, service, var: tk.BooleanVar, title: str, force: bool = False, restart: bool = False) -> None:
         if restart:
-            self.http.stop()
-        want = True if force else self.http_var.get()
-        if self.http.running and not want:
-            self.http.stop()
-        elif want and not self.http.running:
+            service.stop()
+        want = True if force else var.get()
+        if service.running and not want:
+            service.stop()
+        elif want and not service.running:
             try:
-                self.http.start()
+                service.start()
             except OSError as e:
-                messagebox.showerror("HTTP Server", str(e))
-                want = False
-        self.http_var.set(self.http.running)
+                messagebox.showerror(title, str(e))
+        var.set(service.running)
+
+    def toggle_http(self, force: bool = False, restart: bool = False) -> None:
+        self._set_server(self.http, self.http_var, "HTTP Server", force, restart)
 
     def toggle_etp(self, force: bool = False, restart: bool = False) -> None:
-        if restart:
-            self.etp.stop()
-        want = True if force else self.etp_var.get()
-        if self.etp.running and not want:
-            self.etp.stop()
-        elif want and not self.etp.running:
-            try:
-                self.etp.start()
-            except OSError as e:
-                messagebox.showerror("ETP/FTP Server", str(e))
-        self.etp_var.set(self.etp.running)
+        self._set_server(self.etp, self.etp_var, "ETP/FTP Server", force, restart)
 
     def restart_as_admin(self) -> None:
         if winshell.relaunch_as_admin("gui --new-instance"):

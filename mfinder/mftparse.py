@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import struct
 import threading
+import time
 from array import array
 from typing import BinaryIO, Iterator, Optional
 
@@ -163,9 +164,9 @@ def scan_metadata(
                 break
             for o in range(0, len(buf) - rs + 1, rs):
                 r = recno + o // rs
-                if buf[o : o + 4] != b"FILE":
-                    continue
                 if wanted is not None and (r >= len(wanted) or wanted[r] < 0):
+                    continue
+                if buf[o : o + 4] != b"FILE":
                     continue
                 rec = bytearray(buf[o : o + rs])
                 if not apply_fixups(rec, lay.sector):
@@ -178,6 +179,7 @@ def scan_metadata(
                         out = []
             recno += n // rs
             done += n
+            time.sleep(0)  # yield GIL between chunks so UI scrolling stays smooth
     if out:
         yield out
 
@@ -235,10 +237,11 @@ def fill_metadata(
         for batch in access.scan_metadata(cancel, rec2id):
             with index.lock:
                 total += apply_batch(index, rec2id, batch)
+            index.touch_meta()
             if progress:
                 progress(total)
     finally:
         if own:
             access.close()
-    index.rev += 1
+    index.touch_meta()
     return total

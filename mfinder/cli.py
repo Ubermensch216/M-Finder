@@ -214,8 +214,8 @@ def cmd_gui(args) -> int:
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(prog="mfinder", description="Instant file search (Everything-style).")
-    p.add_argument("--version", action="version", version=f"mfinder {__version__}")
+    p = argparse.ArgumentParser(prog="m-finder", description="Instant file name search.")
+    p.add_argument("--version", action="version", version=f"M-Finder {__version__}")
     sub = p.add_subparsers(dest="cmd")
 
     def common(sp, local=True):

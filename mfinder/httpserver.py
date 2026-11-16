@@ -1,4 +1,4 @@
-"""Small read-only HTTP search server (HTML + JSON), like Everything's HTTP server.
+"""Small read-only HTTP search server (HTML + JSON).
 
 It lists matches only; it never serves file contents.
 """

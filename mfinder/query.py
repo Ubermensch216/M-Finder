@@ -1,6 +1,6 @@
-"""Everything-style search syntax: parser, compiler and sorter.
+"""Search syntax: parser, compiler and sorter.
 
-Syntax (subset of Everything's):
+Syntax:
   space = AND, ``|`` = OR, ``!`` = NOT, ``< >`` = grouping, ``"..."`` = quoting
   ``*`` / ``?`` wildcards (match the whole name), ``\\`` in a term matches the full path
   modifiers   case: nocase: regex: noregex: wholeword: ww: path: nopath: wfn:
@@ -372,6 +372,7 @@ class _Ctx:
         self.cancel = cancel
         self.content_max = content_max
         self._dirs: dict[int, str] = {}
+        self._low_dirs: dict[int, str] = {}
 
     def dir_path(self, d: int) -> str:
         p = self._dirs.get(d)
@@ -380,6 +381,13 @@ class _Ctx:
             par = idx.parent[d]
             p = idx.names[d] if par < 0 else self.dir_path(par) + "\\" + idx.names[d]
             self._dirs[d] = p
+        return p
+
+    def low_dir_path(self, d: int) -> str:
+        p = self._low_dirs.get(d)
+        if p is None:
+            p = self.dir_path(d).lower()
+            self._low_dirs[d] = p
         return p
 
     def full(self, i: int) -> str:
@@ -583,7 +591,7 @@ def _compile(node, ctx: _Ctx) -> Callable[[int], bool]:
     if kind == "parent":
         want = node[1]
         parent = idx.parent
-        return lambda i: parent[i] >= 0 and ctx.dir_path(parent[i]).lower() == want
+        return lambda i: parent[i] >= 0 and ctx.low_dir_path(parent[i]) == want
     if kind == "attrib":
         mask = node[1]
         return lambda i: attrs[i] & mask == mask
@@ -603,6 +611,27 @@ def _plain_substring(node) -> Optional[str]:
 
 
 _COST = {"size": 1, "date": 1, "content": 2}
+_META_KINDS = frozenset({"size", "date", "empty", "content"})
+
+
+def query_needs_meta(text: str, flags: Flags = Flags()) -> bool:
+    if not text.strip():
+        return False
+    try:
+        node = parse(text, flags)
+    except QueryError:
+        return False
+    stack = [node]
+    while stack:
+        cur = stack.pop()
+        k = cur[0]
+        if k in _META_KINDS:
+            return True
+        if k in ("and", "or"):
+            stack.extend(cur[1])
+        elif k == "not":
+            stack.append(cur[1])
+    return False
 
 
 def _flatten_and(*asts) -> list:
@@ -629,11 +658,13 @@ def search(
     if filter_text.strip():
         ast = ("and", _flatten_and(parse(filter_text, filter_flags or Flags()), ast))
     with index.lock:
-        ctx = _Ctx(index, cancel, content_max)
         n = len(index)
         alive, parent, lower = index.alive, index.parent, index.lower
-        CH = 4096
-
+        clean_sorted = index.sorted_by_name and index._sorted_rev == index.rev
+        num_roots = index.num_roots if clean_sorted else 0
+        if ast == ("true",) and clean_sorted:
+            return list(index.name_order())
+        ctx = _Ctx(index, cancel, content_max)
         items = ast[1] if ast[0] == "and" else [ast]
         sub, rest = None, items
         for k, node in enumerate(items):
@@ -645,20 +676,31 @@ def search(
         fn = _compile(("and", rest) if len(rest) > 1 else (rest[0] if rest else ("true",)), ctx)
         trivial = all(nd == ("true",) for nd in rest)
 
-        out: list[int] = []
-        try:
-            for start in range(0, n, CH):
-                if cancel is not None and cancel.is_set():
-                    return None
-                end = min(n, start + CH)
+    CH = 32768 if clean_sorted else 8192
+    start_idx = num_roots if clean_sorted else 0
+    out: list[int] = []
+    try:
+        for start in range(start_idx, n, CH):
+            if cancel is not None and cancel.is_set():
+                return None
+            end = min(n, start + CH)
+            if clean_sorted:
+                if sub is not None:
+                    cand = [i for i in range(start, end) if sub in lower[i]]
+                    out.extend(cand if trivial else [i for i in cand if fn(i)])
+                elif trivial:
+                    out.extend(range(start, end))
+                else:
+                    out.extend(i for i in range(start, end) if fn(i))
+            else:
                 if sub is not None:
                     cand = [i for i in range(start, end) if sub in lower[i] and alive[i] and parent[i] >= 0]
                 else:
                     cand = [i for i in range(start, end) if alive[i] and parent[i] >= 0]
                 out.extend(cand if trivial else [i for i in cand if fn(i)])
-        except Cancelled:
-            return None
-        return out
+    except Cancelled:
+        return None
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -679,27 +721,35 @@ def sort_results(
     ascending: bool = True,
     cancel: Optional[threading.Event] = None,
 ) -> Optional[list[int]]:
-    ids = list(ids)
     reverse = not ascending
-    with index.lock:
-        lower, attrs = index.lower, index.attrs
-        if key == "name":
-            ids.sort(key=lower.__getitem__, reverse=reverse)
-            ids.sort(key=lambda i: 0 if attrs[i] & DIR else 1)
-        elif key == "path":
-            ctx = _Ctx(index)
-            parent = index.parent
-            ids.sort(
-                key=lambda i: (ctx.dir_path(parent[i]).lower() if parent[i] >= 0 else "", lower[i]),
-                reverse=reverse,
-            )
-        elif key == "ext":
-            ids.sort(key=lambda i: ("" if attrs[i] & DIR else split_ext(lower[i]), lower[i]), reverse=reverse)
-        elif key in ("size", "mtime"):
-            if not index.ensure_meta(ids, cancel):
-                return None
-            arr = index.size if key == "size" else index.mtime
-            ids.sort(key=arr.__getitem__, reverse=reverse)
-        else:
-            raise QueryError(f"Unknown sort key '{key}'")
+    lower, attrs, parent = index.lower, index.attrs, index.parent
+    if key == "name":
+        if index.sorted_by_name and index._sorted_rev == index.rev:
+            if len(ids) == len(index) - index.num_roots:
+                if ascending:
+                    return list(ids)
+                nd = index.num_dirs
+                return ids[:nd][::-1] + ids[nd:][::-1]
+        ids = list(ids)
+        ids.sort(key=lower.__getitem__, reverse=reverse)
+        ids.sort(key=lambda i: 0 if attrs[i] & DIR else 1)
+    elif key == "path":
+        ids = list(ids)
+        ctx = _Ctx(index)
+        lpath = ctx.low_dir_path
+        ids.sort(
+            key=lambda i: (lpath(parent[i]) if parent[i] >= 0 else "", lower[i]),
+            reverse=reverse,
+        )
+    elif key == "ext":
+        ids = list(ids)
+        ids.sort(key=lambda i: ("" if attrs[i] & DIR else split_ext(lower[i]), lower[i]), reverse=reverse)
+    elif key in ("size", "mtime"):
+        ids = list(ids)
+        if not index.ensure_meta(ids, cancel):
+            return None
+        arr = index.size if key == "size" else index.mtime
+        ids.sort(key=arr.__getitem__, reverse=reverse)
+    else:
+        raise QueryError(f"Unknown sort key '{key}'")
     return ids

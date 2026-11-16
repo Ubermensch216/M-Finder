@@ -18,7 +18,6 @@ TAG_ID_MAPPINGS, TAG_BIN_DATA, TAG_FACE_NAME, TAG_BORDER_FILL, TAG_CHAR_SHAPE, T
 TAG_PARA_HEADER, TAG_PARA_TEXT, TAG_PARA_CHAR_SHAPE = 66, 67, 68
 TAG_CTRL_HEADER, TAG_LIST_HEADER, TAG_TABLE, TAG_PICTURE = 71, 72, 77, 85
 MAX_BLOCKS = 4000
-MAX_IMAGE = 8 << 20
 
 
 class ViewerError(Exception):
@@ -195,7 +194,7 @@ class _Reader:
                 data = P._inflate(data)
             except zlib.error:
                 pass
-        if len(data) > MAX_IMAGE:
+        if len(data) > C.MAX_EMBED_IMAGE:
             return None
         return Image(data, w, h)
 
@@ -377,4 +376,4 @@ def read(path: str) -> Doc:
         blocks.extend(rd.section(raw))
         if rd.truncated:
             break
-    return Doc(blocks=blocks, base_size=10.0, note="document truncated" if rd.truncated else "")
+    return Doc(blocks=blocks, base_size=10.0, note=C.truncated_note() if rd.truncated else "")

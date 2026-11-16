@@ -162,6 +162,30 @@ def make_md(path: str) -> None:
         f.write(MARKDOWN)
 
 
+HTML = """<!doctype html>
+<html>
+<head><title>Ignored</title><style>body { color: red; }</style></head>
+<body>
+<h1>HTML 보고서</h1>
+<p>본문에는 <b>굵은 글씨</b>, <i>기울임</i>, <code>코드</code>, <a href="https://example.com">링크</a>가 포함됩니다.</p>
+<ul>
+  <li>첫 번째 항목</li>
+  <li>두 번째 항목 needle</li>
+</ul>
+<table>
+  <tr><th>항목</th><th>상태</th></tr>
+  <tr><td>검토</td><td>완료</td></tr>
+</table>
+</body>
+</html>
+"""
+
+
+def make_html(path: str) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(HTML)
+
+
 # ---- hwp5 -----------------------------------------------------------------------------------
 
 def rec(tag: int, level: int, payload: bytes = b"") -> bytes:
@@ -259,7 +283,7 @@ def make_all(folder: str) -> dict:
     os.makedirs(folder, exist_ok=True)
     out = {}
     for name, fn in (("sample.docx", make_docx), ("sample.hwpx", make_hwpx), ("sample.xlsx", make_xlsx),
-                     ("sample.md", make_md), ("sample.hwp", make_hwp), ("sample.pdf", make_pdf)):
+                     ("sample.md", make_md), ("sample.html", make_html), ("sample.hwp", make_hwp), ("sample.pdf", make_pdf)):
         p = os.path.join(folder, name)
         if fn(p) is not False:
             out[name] = p

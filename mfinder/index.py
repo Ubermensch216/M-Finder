@@ -6,9 +6,9 @@ import json
 import os
 import struct
 import threading
+import time
 import zlib
 from array import array
-from itertools import compress
 from typing import Callable, Iterable, Optional
 
 FILE_ATTRIBUTE_DIRECTORY = 0x10
@@ -32,6 +32,7 @@ class Index:
     def __init__(self) -> None:
         self.lock = threading.RLock()
         self.rev = 0
+        self.meta_rev = 0
         self.names: list[str] = []
         self.lower: list[str] = []
         self.parent = array("i")
@@ -44,21 +45,67 @@ class Index:
         self.vol = array("H")
         self.alive = bytearray()
         self.roots: list[dict] = []
-        self.frn_maps: list[dict[int, int]] = []
+        self._frn_maps: list[dict[int, int]] = []
+        self._frn_maps_ready = True
         self.folder_sizes_ready = False
         self.folder_sizes_rev = -1
         self.extra: dict = {}  # persisted build info (e.g. file lists used)
+        self.sorted_by_name = False
+        self.num_dirs = 0
+        self.num_roots = 0
+        self._sorted_rev = -1
+        self._needs_save = False
+        self._name_order: Optional[list[int]] = None
+        self._name_order_rev = -1
+        self._dir_paths: dict[int, str] = {}
+        self._live_count_cache = 0
+        self._live_count_rev = -1
         self._has_child: Optional[bytearray] = None
         self._has_child_rev = -1
         self._children: Optional[dict[int, dict[str, int]]] = None  # built on demand, then kept current
 
     # ---- basic access -------------------------------------------------
 
+    @property
+    def frn_maps(self) -> list[dict[int, int]]:
+        if not self._frn_maps_ready:
+            self.ensure_frn_maps()
+        return self._frn_maps
+
+    @frn_maps.setter
+    def frn_maps(self, val: list[dict[int, int]]) -> None:
+        self._frn_maps = val
+        self._frn_maps_ready = True
+
+    def ensure_frn_maps(self) -> list[dict[int, int]]:
+        if self._frn_maps_ready:
+            return self._frn_maps
+        with self.lock:
+            if self._frn_maps_ready:
+                return self._frn_maps
+            maps: list[dict[int, int]] = [{} for _ in self.roots]
+            ntfs_vols = {v for v, r in enumerate(self.roots) if r.get("kind") == "ntfs"}
+            if ntfs_vols:
+                frn, vol, alive = self.frn, self.vol, self.alive
+                for i in range(len(self.names)):
+                    if alive[i]:
+                        f = frn[i]
+                        if f:
+                            v = vol[i]
+                            if v in ntfs_vols:
+                                maps[v][f] = i
+            self._frn_maps = maps
+            self._frn_maps_ready = True
+            return maps
+
     def __len__(self) -> int:
         return len(self.names)
 
     def live_count(self) -> int:
-        return self.alive.count(1)
+        if self._live_count_rev != self.rev:
+            self._live_count_cache = self.alive.count(1)
+            self._live_count_rev = self.rev
+        return self._live_count_cache
 
     def is_dir(self, i: int) -> bool:
         return bool(self.attrs[i] & FILE_ATTRIBUTE_DIRECTORY)
@@ -69,7 +116,7 @@ class Index:
         with self.lock:
             vol = len(self.roots)
             self.roots.append({"path": path, "kind": kind, "root_id": -1, "journal_id": 0, "next_usn": 0})
-            self.frn_maps.append({})
+            self._frn_maps.append({})
             rid = self.add(name, -1, FILE_ATTRIBUTE_DIRECTORY, mtime=-1.0, vol=vol)  # roots have no metadata to fetch
             self.roots[vol]["root_id"] = rid
         return vol, rid
@@ -114,6 +161,8 @@ class Index:
             self.parent[i] = parent
             if self._children is not None and parent >= 0:
                 self._children.setdefault(parent, {})[self.lower[i]] = i
+            if self.attrs[i] & FILE_ATTRIBUTE_DIRECTORY:
+                self._dir_paths.clear()
             self.rev += 1
 
     def remove(self, i: int) -> None:
@@ -125,10 +174,13 @@ class Index:
                 d = self._children.get(self.parent[i])
                 if d and d.get(self.lower[i]) == i:
                     del d[self.lower[i]]
-            v = self.vol[i]
-            fm = self.frn_maps[v] if v < len(self.frn_maps) else None
-            if fm is not None and self.frn[i] and fm.get(self.frn[i]) == i:
-                del fm[self.frn[i]]
+            if self._frn_maps_ready:
+                v = self.vol[i]
+                fm = self._frn_maps[v] if v < len(self._frn_maps) else None
+                if fm is not None and self.frn[i] and fm.get(self.frn[i]) == i:
+                    del fm[self.frn[i]]
+            if self.attrs[i] & FILE_ATTRIBUTE_DIRECTORY:
+                self._dir_paths.clear()
             self.rev += 1
 
     def remove_tree(self, i: int) -> int:
@@ -148,6 +200,10 @@ class Index:
 
     def touch(self) -> None:
         self.rev += 1
+        self.meta_rev += 1
+
+    def touch_meta(self) -> None:
+        self.meta_rev += 1
 
     # ---- paths ---------------------------------------------------------
 
@@ -171,7 +227,13 @@ class Index:
         p = self.parent[i]
         if p < 0:
             return ""
-        return self.full_path(p)
+        res = self._dir_paths.get(p)
+        if res is None:
+            res = self.full_path(p)
+            if len(self._dir_paths) > 65536:
+                self._dir_paths.clear()
+            self._dir_paths[p] = res
+        return res
 
     # ---- children lookup (live watcher, FTP listing) ---------------------
 
@@ -266,7 +328,7 @@ class Index:
             attrs = array("I", self.attrs)
             size = array("q", self.size)
             alive = bytes(self.alive)
-            complete = self.mtime.count(0.0) == 0
+            complete = self.mtime.count(0.0) <= min(5000, n // 20)
         pend = array("i", [0]) * n
         total = array("q", [0]) * n
         for i in range(n):
@@ -287,8 +349,10 @@ class Index:
                 if pend[p] == 0:
                     stack.append(p)
             done += 1
-            if done % 100000 == 0 and cancel is not None and cancel.is_set():
-                return False
+            if done % 100000 == 0:
+                if cancel is not None and cancel.is_set():
+                    return False
+                time.sleep(0)
         with self.lock:
             m = min(n, len(self.names))
             for i in range(m):
@@ -296,6 +360,7 @@ class Index:
                     self.size[i] = total[i]
             self.folder_sizes_ready = complete
             self.folder_sizes_rev = rev
+            self.meta_rev += 1
         return True
 
     def child_flags(self) -> bytearray:
@@ -313,74 +378,129 @@ class Index:
                 self._has_child_rev = self.rev
             return self._has_child
 
-    # ---- persistence ---------------------------------------------------
+    # ---- ordering & persistence ----------------------------------------
 
-    def _compact_locked(self) -> tuple[list[str], array, list[array], list[dict]]:
+    def _sorted_order(self) -> tuple[list[int], int, int]:
+        """Return (keep_ids, num_roots, num_dirs) ordered as: roots, sorted dirs, sorted files."""
         n = len(self.names)
-        alive = self.alive
-        dead_count = alive.count(0)
-        if dead_count == 0:
-            cols = [self.attrs, self.size, self.mtime, self.ctime, self.atime, self.frn, self.vol]
-            return self.names, self.parent, cols, [dict(r) for r in self.roots]
-        col_specs = (("I", self.attrs), ("q", self.size), ("d", self.mtime), ("d", self.ctime),
-                     ("d", self.atime), ("Q", self.frn), ("H", self.vol))
-        remap = array("i", [-1]) * n
-        # Sparse deletions (typical live session): copy contiguous byte spans instead of per-element Python loops.
-        if dead_count <= 4096:
-            spans = []
-            prev = 0
-            pos = 0
-            while True:
-                d = alive.find(0, pos)
-                if d < 0:
-                    break
-                if prev < d:
-                    spans.append((prev, d))
-                prev = d + 1
-                pos = prev
-            if prev < n:
-                spans.append((prev, n))
-            names: list[str] = []
-            new_pos = 0
-            for a, b in spans:
-                names.extend(self.names[a:b])
-                remap[a:b] = array("i", range(new_pos, new_pos + b - a))
-                new_pos += b - a
-            mv_p = memoryview(self.parent).cast("B")
-            raw_parent = array("i")
-            raw_parent.frombytes(b"".join(mv_p[a * 4 : b * 4] for a, b in spans))
-            parent = array("i", (remap[p] if p >= 0 else -1 for p in raw_parent))
-            cols = []
-            for code, arr in col_specs:
-                item = arr.itemsize
-                mv = memoryview(arr).cast("B")
-                out = array(code)
-                out.frombytes(b"".join(mv[a * item : b * item] for a, b in spans))
-                cols.append(out)
-        else:
-            new_pos = 0
-            for i, ok in enumerate(alive):
-                if ok:
-                    remap[i] = new_pos
-                    new_pos += 1
-            names = list(compress(self.names, alive))
-            parent = array("i", (remap[p] if p >= 0 else -1 for p in compress(self.parent, alive)))
-            cols = [array(code, compress(arr, alive)) for code, arr in col_specs]
-        roots = [dict(r, root_id=remap[r["root_id"]]) for r in self.roots]
-        return names, parent, cols, roots
+        alive, parent, attrs, lower = self.alive, self.parent, self.attrs, self.lower
+        root_ids = [r["root_id"] for r in self.roots if 0 <= r["root_id"] < n and alive[r["root_id"]]]
+        root_set = set(root_ids)
+        extra_roots = [i for i in range(n) if alive[i] and parent[i] < 0 and i not in root_set]
+        dirs = [i for i in range(n) if alive[i] and parent[i] >= 0 and (attrs[i] & FILE_ATTRIBUTE_DIRECTORY)]
+        files = [i for i in range(n) if alive[i] and parent[i] >= 0 and not (attrs[i] & FILE_ATTRIBUTE_DIRECTORY)]
+        dirs.sort(key=lower.__getitem__)
+        files.sort(key=lower.__getitem__)
+        return root_ids + extra_roots + dirs + files, len(root_ids) + len(extra_roots), len(dirs)
+
+    def sort_in_place(self) -> None:
+        """Compact tombstoned entries and order live entries before the index is published."""
+        with self.lock:
+            n = len(self.names)
+            if self.sorted_by_name and self._sorted_rev == self.rev and self.alive.count(0) == 0:
+                return
+            keep, num_roots, num_dirs = self._sorted_order()
+            parent, attrs, lower = self.parent, self.attrs, self.lower
+            remap = array("i", [-1]) * n
+            for new_i, old_i in enumerate(keep):
+                remap[old_i] = new_i
+            self.names = [self.names[i] for i in keep]
+            self.lower = [lower[i] for i in keep]
+            self.parent = array("i", (remap[parent[i]] if parent[i] >= 0 else -1 for i in keep))
+            self.attrs = array("I", (attrs[i] for i in keep))
+            self.size = array("q", (self.size[i] for i in keep))
+            self.mtime = array("d", (self.mtime[i] for i in keep))
+            self.ctime = array("d", (self.ctime[i] for i in keep))
+            self.atime = array("d", (self.atime[i] for i in keep))
+            self.frn = array("Q", (self.frn[i] for i in keep))
+            self.vol = array("H", (self.vol[i] for i in keep))
+            count = len(keep)
+            self.alive = bytearray(b"\x01") * count
+            for r in self.roots:
+                if 0 <= r["root_id"] < n:
+                    r["root_id"] = remap[r["root_id"]]
+            self._frn_maps_ready = False
+            self._children = None
+            self._has_child = None
+            self._dir_paths.clear()
+            self.sorted_by_name = True
+            self.num_roots = num_roots
+            self.num_dirs = num_dirs
+            self._sorted_rev = self.rev
+            self._name_order = list(range(num_roots, count))
+            self._name_order_rev = self.rev
+            self._live_count_cache = count
+            self._live_count_rev = self.rev
+
+    def name_order(self) -> list[int]:
+        """Return live non-root entry ids sorted by (folders first, lower-case name ascending)."""
+        if self._name_order is not None and self._name_order_rev == self.rev:
+            return self._name_order
+        with self.lock:
+            if self._name_order is not None and self._name_order_rev == self.rev:
+                return self._name_order
+            if self.sorted_by_name and self._sorted_rev == self.rev:
+                self._name_order = list(range(self.num_roots, len(self.names)))
+                self._name_order_rev = self.rev
+                return self._name_order
+            n = len(self.names)
+            alive, parent, attrs, lower = self.alive, self.parent, self.attrs, self.lower
+            dirs = [i for i in range(n) if alive[i] and parent[i] >= 0 and (attrs[i] & FILE_ATTRIBUTE_DIRECTORY)]
+            files = [i for i in range(n) if alive[i] and parent[i] >= 0 and not (attrs[i] & FILE_ATTRIBUTE_DIRECTORY)]
+            dirs.sort(key=lower.__getitem__)
+            files.sort(key=lower.__getitem__)
+            self.num_dirs = len(dirs)
+            self._name_order = dirs + files
+            self._name_order_rev = self.rev
+            return self._name_order
 
     def save(self, path: str) -> None:
         if array("i").itemsize != 4 or array("I").itemsize != 4:
             raise DatabaseError("unsupported platform array widths")
         with self.lock:
-            names, parent, cols, roots = self._compact_locked()
-            count = len(names)
-            name_blob = "\0".join(names).encode("utf-8", "surrogatepass")
-            body = b"".join(
-                [struct.pack("<II", count, len(name_blob)), name_blob, parent.tobytes()]
-                + [c.tobytes() for c in cols]
-            )
-            meta = json.dumps({"roots": roots, "folder_sizes": self.folder_sizes_ready, "extra": self.extra}).encode("utf-8")
+            n = len(self.names)
+            if self.sorted_by_name and self._sorted_rev == self.rev and self.alive.count(0) == 0:
+                names = list(self.names)
+                col_bytes = [
+                    self.parent.tobytes(),
+                    self.attrs.tobytes(),
+                    self.size.tobytes(),
+                    self.mtime.tobytes(),
+                    self.ctime.tobytes(),
+                    self.atime.tobytes(),
+                    self.frn.tobytes(),
+                    self.vol.tobytes(),
+                ]
+                roots = [dict(r) for r in self.roots]
+                num_roots, num_dirs = self.num_roots, self.num_dirs
+            else:
+                keep, num_roots, num_dirs = self._sorted_order()
+                remap = array("i", [-1]) * n
+                for new_i, old_i in enumerate(keep):
+                    remap[old_i] = new_i
+                names = [self.names[i] for i in keep]
+                parent = array("i", (remap[self.parent[i]] if self.parent[i] >= 0 else -1 for i in keep))
+                col_bytes = [parent.tobytes()] + [
+                    array(code, (arr[i] for i in keep)).tobytes()
+                    for code, arr in (
+                        ("I", self.attrs), ("q", self.size), ("d", self.mtime), ("d", self.ctime),
+                        ("d", self.atime), ("Q", self.frn), ("H", self.vol),
+                    )
+                ]
+                roots = [dict(r, root_id=remap[r["root_id"]] if 0 <= r["root_id"] < n else -1) for r in self.roots]
+            meta_dict = {
+                "roots": roots,
+                "folder_sizes": self.folder_sizes_ready,
+                "extra": self.extra,
+                "sorted": True,
+                "num_roots": num_roots,
+                "num_dirs": num_dirs,
+            }
+        count = len(names)
+        name_blob = "\0".join(names).encode("utf-8", "surrogatepass")
+        body = b"".join([struct.pack("<II", count, len(name_blob)), name_blob] + col_bytes)
+        meta = json.dumps(meta_dict).encode("utf-8")
+        compressed = zlib.compress(body, 1)
         tmp = path + ".tmp"
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         try:
@@ -388,8 +508,9 @@ class Index:
                 f.write(MAGIC)
                 f.write(struct.pack("<II", DB_VERSION, len(meta)))
                 f.write(meta)
-                f.write(zlib.compress(body, 1))
+                f.write(compressed)
             os.replace(tmp, path)
+            self._needs_save = False
         except OSError as e:
             raise DatabaseError(f"Failed to write database: {e}") from e
 
@@ -446,13 +567,20 @@ class Index:
             if idx.folder_sizes_ready:
                 idx.folder_sizes_rev = idx.rev
             idx.extra = meta.get("extra") or {}
+            idx._live_count_cache = count
+            idx._live_count_rev = idx.rev
+            idx._frn_maps = [{} for _ in idx.roots]
+            idx._frn_maps_ready = False
+            if meta.get("sorted"):
+                idx.sorted_by_name = True
+                idx.num_roots = int(meta.get("num_roots", sum(1 for r in idx.roots if r.get("root_id", -1) >= 0)))
+                idx.num_dirs = int(meta.get("num_dirs", 0))
+                idx._sorted_rev = idx.rev
+                idx._name_order = list(range(idx.num_roots, count))
+                idx._name_order_rev = idx.rev
+            else:
+                idx.sort_in_place()
+                idx._needs_save = True
         except (ValueError, KeyError, struct.error, zlib.error) as e:
             raise DatabaseError("Database is corrupt") from e
-        idx.frn_maps = [{} for _ in idx.roots]
-        for i in range(count):
-            f = idx.frn[i]
-            if f:
-                v = idx.vol[i]
-                if v < len(idx.roots) and idx.roots[v]["kind"] == "ntfs":
-                    idx.frn_maps[v][f] = i
         return idx

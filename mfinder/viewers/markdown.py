@@ -26,10 +26,8 @@ _INLINE = re.compile(
 )
 
 
-def _style(base: Run, **kw) -> Run:
-    d = dict(base.__dict__)
-    d.update(kw)
-    return Run(**d)
+_style = C.style_run
+_load_image = C.load_local_image
 
 
 def inline(text: str, base: Run, base_dir: str, out: list, depth: int = 0) -> None:
@@ -72,20 +70,6 @@ def _unescape(s: str) -> str:
     return re.sub(r"\\([\\`*_{}\[\]()#+\-.!|>~<])", r"\1", s)
 
 
-def _load_image(src: str, base_dir: str):
-    if re.match(r"^[a-z][a-z0-9+.-]*:", src, re.I) and not re.match(r"^file:", src, re.I):
-        return None
-    path = src[7:] if src.lower().startswith("file:///") else src
-    path = os.path.normpath(os.path.join(base_dir, path.replace("/", os.sep)))
-    try:
-        if os.path.getsize(path) > 8 << 20:
-            return None
-        with open(path, "rb") as f:
-            return Image(f.read())
-    except OSError:
-        return None
-
-
 def _table_row(line: str) -> list[str]:
     s = line.strip()
     if s.startswith("|"):
@@ -105,7 +89,7 @@ def read(path: str) -> Doc:
     if res is None:
         raise ValueError("binary")
     text = res[0].replace("\r\n", "\n").replace("\r", "\n")
-    return parse(text, os.path.dirname(path), "markdown truncated" if big else "")
+    return parse(text, os.path.dirname(path), C.truncated_note() if big else "")
 
 
 def parse(text: str, base_dir: str = "", note: str = "") -> Doc:

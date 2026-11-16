@@ -52,8 +52,7 @@ def _xml_text(xml: str, para_end: str, tab: str | None = None) -> str:
     return html.unescape(xml)
 
 
-def _natural_key(s: str) -> list:
-    return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", s)]
+from .viewers.common import natural_key as _natural_key
 
 
 # ---- plain text ------------------------------------------------------------------

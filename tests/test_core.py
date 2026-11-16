@@ -7,7 +7,7 @@ import threading
 import time
 import unittest
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -265,20 +265,24 @@ class EngineAndHttpTests(unittest.TestCase):
                 with self.assertRaises(urllib.error.HTTPError) as cm:
                     urllib.request.urlopen(base + "?s=cat&json=1")
                 self.assertEqual(cm.exception.code, 401)
+                cm.exception.close()
                 import base64
 
                 auth = {"Authorization": "Basic " + base64.b64encode(b"u:p").decode()}
                 req = urllib.request.Request(base + "?s=cat&json=1&sort=name", headers=auth)
-                data = json.load(urllib.request.urlopen(req))
+                with urllib.request.urlopen(req) as resp:
+                    data = json.load(resp)
                 self.assertEqual(data["totalResults"], 2)
                 self.assertEqual(data["results"][0]["name"], "cat.JPG")
                 req = urllib.request.Request(base + "?s=%3Cscript%3E", headers=auth)
-                html = urllib.request.urlopen(req).read().decode()
+                with urllib.request.urlopen(req) as resp:
+                    html = resp.read().decode()
                 self.assertNotIn("<script>", html)
                 req = urllib.request.Request(base + "?s=regex:(", headers=auth)
                 with self.assertRaises(urllib.error.HTTPError) as cm:
                     urllib.request.urlopen(req)
                 self.assertEqual(cm.exception.code, 400)
+                cm.exception.close()
             finally:
                 srv.shutdown()
                 srv.server_close()

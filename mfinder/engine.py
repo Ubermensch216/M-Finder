@@ -49,6 +49,7 @@ class Engine:
         self._bg_stop = threading.Event()
         self._bg_thread: Optional[threading.Thread] = None
         self._last_save_rev = -1
+        self._last_save_meta_rev = -1
         self.on_status: Optional[Callable[[str], None]] = None
 
     # ---- helpers ---------------------------------------------------------
@@ -95,11 +96,12 @@ class Engine:
         self.stop_monitors()
         self.index = idx
         self._last_save_rev = idx.rev
+        self._last_save_meta_rev = idx.meta_rev
         self.ready = True
         self._set_status(f"{idx.live_count():,} objects (database loaded)")
         return True
 
-    def rebuild(self) -> bool:
+    def rebuild(self, save: bool = True) -> bool:
         """Re-index every configured root and swap the result in. Blocking."""
         if not self._build_lock.acquire(blocking=False):
             return False
@@ -142,12 +144,16 @@ class Engine:
             new.extra["filelists"] = self._expected_stamps()
             if self._cancel.is_set():
                 return False
+            new.sort_in_place()
+            if self._cancel.is_set():
+                return False
             self.stop_monitors()
             self._fill_cancel.set()
             self.index = new
             self.ready = True
             self._set_status(f"{new.live_count():,} objects")
-            self.save()
+            if save:
+                self.save()
             self.start_monitors()
             self.start_background()
             return True
@@ -160,42 +166,46 @@ class Engine:
 
     def save(self, only_if_dirty: bool = False) -> None:
         with self._save_lock:
-            if only_if_dirty and self.index.rev == self._last_save_rev:
+            if only_if_dirty and not self._dirty():
                 return
             try:
                 self.index.save(self.settings.database_file)
                 self._last_save_rev = self.index.rev
+                self._last_save_meta_rev = self.index.meta_rev
             except DatabaseError as e:
                 self._set_status(str(e))
 
     # ---- background metadata / folder sizes -----------------------------------
 
-    def start_background(self) -> None:
+    def start_background(self, delay: float = 0.0) -> None:
         """Fill size/date from $MFT, compute folder sizes, and keep them fresh."""
         self._fill_cancel.set()
         cancel = self._fill_cancel = threading.Event()
-        threading.Thread(target=self._fill_worker, args=(self.index, cancel), daemon=True, name="fill").start()
+        threading.Thread(target=self._fill_worker, args=(self.index, cancel, delay), daemon=True, name="fill").start()
         if self._bg_thread is None or not self._bg_thread.is_alive():
             self._bg_stop.clear()
             self._bg_thread = threading.Thread(target=self._maintenance, daemon=True, name="maintenance")
             self._bg_thread.start()
 
-    def _fill_worker(self, index: Index, cancel: threading.Event) -> None:
+    def _fill_worker(self, index: Index, cancel: threading.Event, delay: float = 0.0) -> None:
+        if delay > 0 and cancel.wait(delay):
+            return
         self.filling = True
+        changed = index._needs_save
         try:
-            changed = False
-            start_rev = index.rev
             for vol, r in enumerate(index.roots):
                 if r["kind"] != "ntfs" or cancel.is_set():
                     continue
-                if not any(index.mtime[i] == 0.0 for i in index.frn_maps[vol].values()):
+                mtime, v_arr, alive = index.mtime, index.vol, index.alive
+                unfetched_vol = sum(1 for i in range(len(index)) if alive[i] and v_arr[i] == vol and mtime[i] == 0.0)
+                if unfetched_vol <= 5000:
                     continue
                 try:
                     access = self.open_access(r["path"])
                 except OSError:
                     continue
                 try:
-                    if mftparse.fill_metadata(index, vol, cancel, access=access):
+                    if mftparse.fill_metadata(index, vol, cancel, access=access) > 0:
                         changed = True
                 except (OSError, mftparse.MftError):
                     pass
@@ -203,19 +213,19 @@ class Engine:
                     access.close()
             if cancel.is_set():
                 return
-            left = [i for i in range(len(index)) if index.alive[i] and index.mtime[i] == 0.0 and index.roots[index.vol[i]]["kind"] != "filelist"]
-            if left and len(left) <= 200000:  # records the $MFT parser skipped (extension records)
-                if index.ensure_meta(left, cancel):
+            if changed or (not index.folder_sizes_ready and self.settings.folder_sizes):
+                left = [i for i in range(len(index)) if index.alive[i] and index.mtime[i] == 0.0 and index.roots[index.vol[i]]["kind"] != "filelist"]
+                cap = 200000 if changed else 5000
+                if left and len(left) <= cap:  # records the $MFT parser skipped (extension records)
+                    index.ensure_meta(left, cancel)
                     changed = True
-            if self.settings.folder_sizes and not cancel.is_set() and (
-                not index.folder_sizes_ready or index.folder_sizes_rev != index.rev
-            ):
+            if self.settings.folder_sizes and not cancel.is_set() and (not index.folder_sizes_ready or changed):
                 if index.compute_folder_sizes(cancel):
                     changed = True
-            if not cancel.is_set() and (changed or index.rev != start_rev):
-                index.touch()
-                if index is self.index:
-                    self.save()
+            if changed:
+                index.touch_meta()
+            if index is self.index and not cancel.is_set() and (changed or not os.path.exists(self.settings.database_file)):
+                self.save()
         finally:
             self.filling = False
 
@@ -268,6 +278,15 @@ class Engine:
         if len(self.index):
             self.save(only_if_dirty=True)
 
+    def _dirty(self) -> bool:
+        idx = self.index
+        return (
+            idx._needs_save
+            or idx.rev != self._last_save_rev
+            or idx.meta_rev != self._last_save_meta_rev
+            or not os.path.exists(self.settings.database_file)
+        )
+
     # ---- searching -------------------------------------------------------
 
     def flags(self) -> query.Flags:
@@ -290,9 +309,12 @@ class Engine:
         if f and f.get("search"):
             ftext = f["search"]
             fflags = query.Flags(case=f.get("case", False), ww=f.get("ww", False), path=f.get("path", False), regex=f.get("regex", False))
-        ids = query.search(self.index, text, flags or self.flags(), cancel, ftext, fflags, s.content_max_mb << 20)
+        idx = self.index
+        skey = sort_key or s.sort_key
+        asc = s.sort_ascending if ascending is None else ascending
+        ids = query.search(idx, text, flags or self.flags(), cancel, ftext, fflags, s.content_max_mb << 20)
         if ids is None:
             return None
-        return query.sort_results(
-            self.index, ids, sort_key or s.sort_key, s.sort_ascending if ascending is None else ascending, cancel
-        )
+        if skey == "name" and asc and idx.sorted_by_name and idx._sorted_rev == idx.rev:
+            return ids
+        return query.sort_results(idx, ids, skey, asc, cancel)

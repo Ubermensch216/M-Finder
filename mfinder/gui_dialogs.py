@@ -112,6 +112,10 @@ class OptionsDialog(tk.Toplevel):
         self.transient(win)
         self.resizable(False, False)
         theme.apply_window(self)
+        try:
+            self.iconbitmap(self.ctl.icon_path)
+        except tk.TclError:
+            pass
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True, padx=8, pady=8)
         self.vars: dict[str, tk.Variable] = {}
@@ -128,7 +132,7 @@ class OptionsDialog(tk.Toplevel):
         def entry(parent, key, text, width=30, show="", cast=str):
             row = ttk.Frame(parent)
             row.pack(anchor="w", fill="x", pady=2)
-            ttk.Label(row, text=text, width=22).pack(side="left")
+            ttk.Label(row, text=text, width=28).pack(side="left")
             v = self.vars[key] = tk.StringVar(value=str(getattr(s, key)))
             ttk.Entry(row, textvariable=v, width=width, show=show).pack(side="left")
 
@@ -139,10 +143,10 @@ class OptionsDialog(tk.Toplevel):
         check(g, "folder_sizes", _("Compute folder sizes in the background"))
         entry(g, "font_size", _("Font size:"), 6)
         entry(g, "content_max_mb", _("Content search max file size (MB):"), 6)
-        entry(g, "db_path", _("Database file (blank = default):"), 40)
+        entry(g, "db_path", _("Database file (blank = default):"), 34)
         row = ttk.Frame(g)
         row.pack(anchor="w", pady=2)
-        ttk.Label(row, text=_("Language:"), width=22).pack(side="left")
+        ttk.Label(row, text=_("Language:"), width=28).pack(side="left")
         langs = i18n.available()
         self._lang_codes = ["auto"] + list(langs)
         self.cb_lang = ttk.Combobox(row, state="readonly", width=20, values=[_("System default")] + list(langs.values()))
@@ -150,7 +154,7 @@ class OptionsDialog(tk.Toplevel):
         self.cb_lang.pack(side="left")
         row = ttk.Frame(g)
         row.pack(anchor="w", pady=2)
-        ttk.Label(row, text=_("Theme:"), width=22).pack(side="left")
+        ttk.Label(row, text=_("Theme:"), width=28).pack(side="left")
         self._themes = ["system", "light", "dark"]
         self.cb_theme = ttk.Combobox(row, state="readonly", width=20, values=[_("System default"), _("Light"), _("Dark")])
         self.cb_theme.current(self._themes.index(s.theme) if s.theme in self._themes else 0)
@@ -278,7 +282,13 @@ class OptionsDialog(tk.Toplevel):
         if hk and not parse_hotkey(hk):
             messagebox.showerror(_("Options"), _("Invalid hotkey. Use e.g. ctrl+alt+f or win+f9."), parent=self)
             return
-        old = (list(s.roots), list(s.filelists), s.use_mft, s.exclude_hidden, s.exclude_system, list(s.exclude_folders), list(s.exclude_patterns), s.db_path, s.use_service)
+        def _index_config(cfg):
+            return (
+                list(cfg.roots), list(cfg.filelists), cfg.use_mft, cfg.exclude_hidden, cfg.exclude_system,
+                list(cfg.exclude_folders), list(cfg.exclude_patterns), cfg.db_path, cfg.use_service,
+            )
+
+        old = _index_config(s)
         s.roots, s.filelists = list(self.lb_roots.get(0, "end")), list(self.lb_lists.get(0, "end"))
         s.exclude_folders = list(self.lb_ex.get(0, "end"))
         s.exclude_patterns = [p.strip() for p in self.v_pat.get().split(";") if p.strip()]
@@ -295,7 +305,7 @@ class OptionsDialog(tk.Toplevel):
             s.save()
         except OSError as e:
             messagebox.showerror(_("Options"), f"{e}", parent=self)
-        changed = old != (list(s.roots), list(s.filelists), s.use_mft, s.exclude_hidden, s.exclude_system, list(s.exclude_folders), list(s.exclude_patterns), s.db_path, s.use_service)
+        changed = old != _index_config(s)
         self.destroy()
         self.ctl.settings_changed()
         if changed and messagebox.askyesno(_("Options"), _("Indexing options changed. Rebuild the index now?"), parent=self.win):

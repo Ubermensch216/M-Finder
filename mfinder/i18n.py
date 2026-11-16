@@ -19,7 +19,12 @@ _PRIMARY_LANG_IDS = {0x12: "ko", 0x09: "en", 0x07: "de", 0x0C: "fr", 0x0A: "es",
 
 
 def _dirs() -> list[str]:
-    return [os.path.join(os.path.dirname(os.path.abspath(__file__)), "locales"), os.path.join(app_dir(), "locales")]
+    dirs = [os.path.join(os.path.dirname(os.path.abspath(__file__)), "locales")]
+    meipass = getattr(sys, "_MEIPASS", "")
+    if meipass:
+        dirs.append(os.path.join(meipass, "mfinder", "locales"))
+    dirs.append(os.path.join(app_dir(), "locales"))
+    return dirs
 
 
 def available() -> dict[str, str]:

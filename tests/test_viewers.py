@@ -11,7 +11,7 @@ import fixtures
 from mfinder import preview, query, viewers
 from mfinder.index import Index
 from mfinder.scanner import scan_folder
-from mfinder.viewers import docx, hwp, hwpx, markdown, rhwp, xlsx
+from mfinder.viewers import docx, html, hwp, hwpx, markdown, rhwp, xlsx
 from mfinder.viewers import model as M
 
 
@@ -200,12 +200,26 @@ class XlsxTests(Samples):
         self.assertEqual(f(5, '0" 개"'), "5 개")
 
 
+class HtmlTests(Samples):
+    def test_html_page_and_code_modes(self):
+        d = html.read(self.path("sample.html"))
+        ps = paras(d)
+        self.assertEqual(ps[0].runs[0].text, "HTML 보고서")
+        self.assertTrue(ps[0].runs[0].bold)
+        self.assertEqual(len(tables(d)), 1)
+        page_ld = viewers.load(self.path("sample.html"), html_mode="page")
+        code_ld = viewers.load(self.path("sample.html"), html_mode="code")
+        self.assertEqual(page_ld.kind, "rich")
+        self.assertEqual(code_ld.kind, "text")
+        self.assertIn("<h1>HTML 보고서</h1>", code_ld.model[0])
+
+
 class LoaderTests(Samples):
     def test_kinds(self):
         kinds = {n: viewers.load(p) for n, p in self.files.items()}
         self.assertEqual({n: k.kind for n, k in kinds.items()},
                          {"sample.docx": "rich", "sample.hwpx": "rich", "sample.hwp": "rich", "sample.md": "rich",
-                          "sample.xlsx": "sheet", "sample.pdf": "pdf", "sample.txt": "text"})
+                          "sample.html": "rich", "sample.xlsx": "sheet", "sample.pdf": "pdf", "sample.txt": "text"})
         self.assertEqual(kinds["sample.txt"].model[0].splitlines()[1], "needle in a haystack")
 
     def test_broken_files_fall_back_to_text(self):
@@ -287,7 +301,7 @@ class ContentSearchTests(Samples):
         idx = Index()
         scan_folder(idx, os.path.realpath(self.tmp.name))
         found = sorted(idx.names[i] for i in query.search(idx, "content:needle"))
-        want = ["sample.docx", "sample.hwp", "sample.hwpx", "sample.md", "sample.txt", "sample.xlsx"]
+        want = ["sample.docx", "sample.html", "sample.hwp", "sample.hwpx", "sample.md", "sample.txt", "sample.xlsx"]
         if viewers.HAVE_PDF:
             want.append("sample.pdf")
         self.assertEqual(found, sorted(want))

@@ -62,8 +62,8 @@ class Settings:
     show_preview: bool = True
     preview_pos: str = "right"  # bottom | right | left
     preview_height: int = 260
-    preview_width: int = 480
-    geometry: str = "900x600"
+    preview_width: int = 300
+    geometry: str = "1000x640"
     column_widths: dict = field(default_factory=lambda: {"name": 280, "path": 380, "size": 90, "mtime": 140, "ext": 80})
     # background / shell integration
     tray_icon: bool = False
@@ -110,6 +110,8 @@ class Settings:
             if flt.get("name") == "Everything" and not flt.get("search"):
                 flt["name"] = "All"
         if s.current_filter == "Everything":
+            s.current_filter = "All"
+        if not s.find_filter(s.current_filter):
             s.current_filter = "All"
         return s
 

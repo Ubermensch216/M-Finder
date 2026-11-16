@@ -26,6 +26,7 @@ from tkinter import font as tkfont
 
 from . import common as C
 from . import model as M
+from .xlsx import col_name as _col_name
 
 try:  # optional: PDF pages and picture conversion/scaling
     import pymupdf  # type: ignore
@@ -967,15 +968,6 @@ class SheetView(_View):
         if th > 0:
             b.yview_moveto(max(0.0, (y - h / 3) / th))
         self._schedule()
-
-
-def _col_name(c: int) -> str:
-    s = ""
-    c += 1
-    while c:
-        c, r = divmod(c - 1, 26)
-        s = chr(65 + r) + s
-    return s
 
 
 # ---- pictures ----------------------------------------------------------------------------------

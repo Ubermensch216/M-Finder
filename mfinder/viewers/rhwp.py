@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 
+from .. import winshell
 from ..settings import app_dir
 
 EXTS = (".hwp", ".hwpx")
@@ -40,17 +41,13 @@ def configure(path: str = "", webfonts: bool = False, enabled: bool = True) -> N
     CONFIG["enabled"] = bool(enabled)
 
 
-def _root() -> str:
-    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
 def find_exe() -> str:
     """Path of the rhwp executable, or "" when none is installed."""
     cands: list[str] = []
     for p in (os.environ.get("RHWP_EXE", ""), CONFIG["path"]):
         if p:
             cands.append(p)
-    here = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else _root()
+    here = os.path.dirname(sys.executable) if winshell.frozen() else winshell.package_root()
     meipass = getattr(sys, "_MEIPASS", "")
     for base in filter(None, (here, meipass)):
         cands += [os.path.join(base, "rhwp", EXE_NAME), os.path.join(base, EXE_NAME),
