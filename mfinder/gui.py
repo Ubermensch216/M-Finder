@@ -574,6 +574,7 @@ class SearchWindow(tk.Toplevel):
             ("<Control-r>", lambda: self._toggle(self.v_regex)),
             ("<Control-p>", self.options),
             ("<F5>", ctl.rebuild),
+            ("<F6>", self.open_path),
             ("<Control-n>", ctl.new_window),
             ("<Control-w>", self.on_close),
             ("<Control-d>", self.add_bookmark),
@@ -971,7 +972,7 @@ class SearchWindow(tk.Toplevel):
         m = tk.Menu(self, tearoff=0)
         st = "normal" if self.list.sel else "disabled"
         m.add_command(label=_("Open"), command=self.open_selected, state=st)
-        m.add_command(label=_("Open Path"), command=self.open_path, state=st)
+        m.add_command(label=_("Open Path"), command=self.open_path, state=st, accelerator="F6")
         m.add_separator()
         m.add_command(label=_("Copy Full Path to Clipboard"), command=self.copy_full_path, state=st, accelerator="Ctrl+Shift+C")
         m.add_command(label=_("Copy Name to Clipboard"), command=self.copy_name, state=st)
@@ -1003,7 +1004,7 @@ class SearchWindow(tk.Toplevel):
         f.add_command(label=_("Open File List..."), command=self.open_filelist)
         f.add_separator()
         f.add_command(label=_("Open"), command=self.open_selected)
-        f.add_command(label=_("Open Path"), command=self.open_path)
+        f.add_command(label=_("Open Path"), command=self.open_path, accelerator="F6")
         f.add_separator()
         f.add_command(label=_("Export..."), command=self.export)
         f.add_separator()

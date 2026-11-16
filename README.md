@@ -85,7 +85,8 @@ M-Finder.exe gui --headless                        # 창 없이 인덱스 + IPC�
 |---|---|---|---|
 | `Ctrl+F` / `Ctrl+L` / `F3` | 검색창 포커스 | `F4` / `Alt+P` | 미리보기 창 토글 |
 | `Enter` / `더블 클릭` | 선택한 항목 열기 | `Ctrl+Shift+C` | 전체 경로 복사 |
-| `Delete` | 휴지통으로 삭제 | `Ctrl+D` | 북마크 추가 |
+| `Delete` | 휴지통으로 삭제 | `F6` | 경로 열기 (탐색기에서 선택 표시) |
+| `Ctrl+D` | 북마크 추가 | | |
 | `Ctrl+I` / `Ctrl+B` | 대소문자 / 단어 단위 일치 | `Ctrl+U` / `Ctrl+R` | 전체 경로 / 정규식 토글 |
 | `Ctrl+P` / `F5` | 옵션 / 인덱스 다시 만들기 | `Ctrl++` / `Ctrl+-` / `Ctrl+0` | 확대 / 축소 / 초기화 |
 
