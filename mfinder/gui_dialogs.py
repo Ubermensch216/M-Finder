@@ -44,6 +44,125 @@ def center_on(dlg: tk.Toplevel, parent) -> None:
     dlg.deiconify()
 
 
+_MOD_KEYSYMS = {"Control_L": "ctrl", "Control_R": "ctrl", "Alt_L": "alt", "Alt_R": "alt", "Shift_L": "shift", "Shift_R": "shift"}
+_MOD_ORDER = ("ctrl", "alt", "shift", "win")
+_MOD_STATE = (("ctrl", 0x0004), ("shift", 0x0001), ("alt", 0x20000))  # Tk event.state bits on Windows
+_MOD_TITLE = {"ctrl": "Ctrl", "alt": "Alt", "shift": "Shift", "win": "Win"}
+
+
+def hotkey_text(spec: str) -> str:
+    """'ctrl+alt+f' -> 'Ctrl + Alt + F' (empty stays empty)."""
+    mods, key = [], ""
+    for part in (p.strip().lower() for p in spec.split("+") if p.strip()):
+        if part == "control":
+            part = "ctrl"
+        if part in _MOD_TITLE:
+            mods.append(part)
+        else:
+            key = part.upper() if len(part) <= 3 or part == "space" else part
+            key = "Space" if part == "space" else key
+    mods.sort(key=_MOD_ORDER.index)
+    return " + ".join([_MOD_TITLE[m] for m in mods] + ([key] if key else []))
+
+
+def hotkey_key_token(keysym: str) -> str | None:
+    """Tk keysym -> the key part of a hotkey spec ('f', '5', 'f9', 'space'), None if it cannot be a global hotkey."""
+    if len(keysym) == 1 and keysym.isalnum() and keysym.isascii():
+        return keysym.lower()
+    if keysym == "space":
+        return "space"
+    if keysym[:1] in ("F", "f") and keysym[1:].isdigit() and 1 <= int(keysym[1:]) <= 24:
+        return keysym.lower()
+    return None
+
+
+class HotkeyBox(ttk.Frame):
+    """Hotkey picker: click it, then press the keys one at a time (modifiers first, then one key).
+
+    Esc cancels, Backspace takes back the last modifier. ``var`` always holds the spec ('ctrl+alt+f', '' = none).
+    """
+
+    def __init__(self, parent, var: tk.StringVar, label: str) -> None:
+        super().__init__(parent)
+        self.var = var
+        self.capturing = False
+        self.pending: list[str] = []
+        row = ttk.Frame(self)
+        row.pack(fill="x")
+        ttk.Label(row, text=label, width=28).pack(side="left")
+        self.shown = tk.StringVar()
+        self.entry = ttk.Entry(row, textvariable=self.shown, width=22, state="readonly", cursor="hand2")
+        self.entry.pack(side="left")
+        ttk.Button(row, text=_("Clear"), width=6, command=self.clear).pack(side="left", padx=6)
+        self.hint = ttk.Label(self, foreground=COLORS["dim"], wraplength=440, justify="left")
+        self.hint.pack(anchor="w", pady=(2, 0))
+        self.entry.bind("<Button-1>", self._click)
+        self.entry.bind("<FocusIn>", lambda e: self._begin())
+        self.entry.bind("<FocusOut>", lambda e: self._end())
+        self.entry.bind("<KeyPress>", self._key)
+        self._end()
+
+    def _click(self, _e) -> str:
+        self.entry.focus_set()
+        self._begin()
+        return "break"
+
+    def _begin(self) -> None:
+        if not self.capturing:
+            self.capturing, self.pending = True, []
+        self._refresh()
+
+    def _end(self) -> None:
+        self.capturing, self.pending = False, []
+        self._refresh()
+
+    def _refresh(self, hint: str = "") -> None:
+        if self.capturing:
+            hint = hint or _("Press the keys one at a time: Ctrl / Alt / Shift, then a key. Esc cancels, Backspace undoes.")
+            text = " + ".join(_MOD_TITLE[m] for m in self.pending) + " + " if self.pending else _("Press the keys...")
+        else:
+            text = hotkey_text(self.var.get()) or _("(none)")
+        self.shown.set(text)
+        self.hint.configure(text=hint)
+
+    def clear(self) -> None:
+        self.var.set("")
+        self._end()
+
+    def _key(self, e) -> str | None:
+        if e.keysym == "Tab":
+            return None  # let focus move on
+        if not self.capturing:
+            self._begin()
+        if e.keysym == "Escape":
+            self._end()
+            self.winfo_toplevel().focus_set()
+            return "break"
+        if e.keysym == "BackSpace":
+            if self.pending:
+                self.pending.pop()
+            self._refresh()
+            return "break"
+        mod = _MOD_KEYSYMS.get(e.keysym)
+        if mod:
+            if mod not in self.pending:
+                self.pending.append(mod)
+            self._refresh()
+            return "break"
+        tok = hotkey_key_token(e.keysym)
+        mods = list(self.pending) + [m for m, bit in _MOD_STATE if e.state & bit and m not in self.pending]
+        if tok is None:
+            self._refresh(_("This key cannot be used."))
+        elif not mods:
+            self._refresh(_("A modifier key (Ctrl, Alt or Shift) is required."))
+        else:
+            mods.sort(key=_MOD_ORDER.index)
+            self.var.set("+".join(mods + [tok]))
+            self._end()
+            self.winfo_toplevel().focus_set()
+        return "break"
+
+
 class SyntaxHelpDialog(tk.Toplevel):
     """Read-only reference of the search syntax: a heading per group, the term on the left, its meaning on the right."""
 
@@ -348,7 +467,8 @@ class OptionsDialog(tk.Toplevel):
         check(bg, "single_instance", _("Only allow one M-Finder process (reuse the running one)"))
         self.v_startup = tk.BooleanVar(value=winshell.is_run_on_startup() if os.name == "nt" else False)
         ttk.Checkbutton(bg, text=_("Run M-Finder when Windows starts"), variable=self.v_startup).pack(anchor="w")
-        entry(bg, "global_hotkey", _("Global hotkey (e.g. ctrl+alt+f):"), 20)
+        self.vars["global_hotkey"] = tk.StringVar(value=s.global_hotkey)
+        HotkeyBox(bg, self.vars["global_hotkey"], _("Global hotkey:")).pack(anchor="w", fill="x", pady=2)
         ttk.Label(bg, text=_("The hotkey and tray icon need the tray icon option."), foreground=COLORS["dim"]).pack(anchor="w", pady=4)
 
         bar = ttk.Frame(self)
