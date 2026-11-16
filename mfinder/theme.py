@@ -99,10 +99,14 @@ def apply(root: tk.Misc, name: str) -> str:
         style.map("TButton", background=[("active", c["sel"])])
         style.configure("TCheckbutton", indicatorbackground=c["entry_bg"], indicatorforeground=c["fg"])
         style.map("TCheckbutton",
+                  background=[("active", c["sel"]), ("focus", c["sel"])],
+                  foreground=[("disabled", c["dim"]), ("active", c["fg"]), ("focus", c["fg"])],
                   indicatorbackground=[("pressed", c["sel"]), ("disabled", c["window"])],
                   indicatorforeground=[("disabled", c["dim"])])
         style.configure("TRadiobutton", indicatorbackground=c["entry_bg"], indicatorforeground=c["fg"])
         style.map("TRadiobutton",
+                  background=[("active", c["sel"]), ("focus", c["sel"])],
+                  foreground=[("disabled", c["dim"]), ("active", c["fg"]), ("focus", c["fg"])],
                   indicatorbackground=[("pressed", c["sel"]), ("disabled", c["window"])],
                   indicatorforeground=[("disabled", c["dim"])])
         style.configure("TNotebook", background=c["window"])
