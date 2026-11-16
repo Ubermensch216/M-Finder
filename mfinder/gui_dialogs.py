@@ -22,6 +22,22 @@ def ask_text(parent, title: str, prompt: str, initial: str = "") -> str | None:
     return s.strip() if s and s.strip() else None
 
 
+def center_on(dlg: tk.Toplevel, parent) -> None:
+    """Place ``dlg`` at the centre of ``parent`` (kept inside the screen)."""
+    dlg.update_idletasks()
+    w, h = dlg.winfo_reqwidth(), dlg.winfo_reqheight()
+    try:
+        px, py = parent.winfo_rootx(), parent.winfo_rooty()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+    except tk.TclError:
+        return
+    x = px + (pw - w) // 2
+    y = py + (ph - h) // 2
+    x = max(0, min(x, dlg.winfo_screenwidth() - w))
+    y = max(0, min(y, dlg.winfo_screenheight() - h))
+    dlg.geometry(f"+{x}+{y}")
+
+
 class _ListOrganizer(tk.Toplevel):
     """Generic ordered list editor (rename / delete / move)."""
 
@@ -44,6 +60,7 @@ class _ListOrganizer(tk.Toplevel):
         ttk.Button(bar, text=_("Cancel"), command=self.destroy).pack(side="right")
         ttk.Button(bar, text=_("OK"), command=self.ok).pack(side="right", padx=6)
         self.refresh()
+        center_on(self, parent)
         self.grab_set()
 
     def refresh(self, select: int | None = None) -> None:
@@ -219,6 +236,7 @@ class OptionsDialog(tk.Toplevel):
         bar.pack(fill="x", padx=8, pady=(0, 8))
         ttk.Button(bar, text=_("Cancel"), command=self.destroy).pack(side="right")
         ttk.Button(bar, text=_("OK"), command=self._ok).pack(side="right", padx=6)
+        center_on(self, win)
         self.grab_set()
 
     # -- helpers --
