@@ -23,19 +23,24 @@ def ask_text(parent, title: str, prompt: str, initial: str = "") -> str | None:
 
 
 def center_on(dlg: tk.Toplevel, parent) -> None:
-    """Place ``dlg`` at the centre of ``parent`` (kept inside the screen)."""
+    """Place ``dlg`` at the centre of ``parent`` (kept inside the screen) and show it.
+
+    The dialog must have been ``withdraw()``n when it was created so it never appears at the default position first.
+    """
     dlg.update_idletasks()
     w, h = dlg.winfo_reqwidth(), dlg.winfo_reqheight()
     try:
         px, py = parent.winfo_rootx(), parent.winfo_rooty()
         pw, ph = parent.winfo_width(), parent.winfo_height()
     except tk.TclError:
+        dlg.deiconify()
         return
     x = px + (pw - w) // 2
     y = py + (ph - h) // 2
     x = max(0, min(x, dlg.winfo_screenwidth() - w))
     y = max(0, min(y, dlg.winfo_screenheight() - h))
     dlg.geometry(f"+{x}+{y}")
+    dlg.deiconify()
 
 
 class _ListOrganizer(tk.Toplevel):
@@ -43,6 +48,7 @@ class _ListOrganizer(tk.Toplevel):
 
     def __init__(self, parent, title: str, items: list[dict], label: str, on_save) -> None:
         super().__init__(parent)
+        self.withdraw()
         self.title(title)
         self.transient(parent)
         theme.apply_window(self)
@@ -123,6 +129,7 @@ def organize_filters(win) -> None:
 class OptionsDialog(tk.Toplevel):
     def __init__(self, win) -> None:
         super().__init__(win)
+        self.withdraw()
         self.win, self.ctl = win, win.ctl
         s = self.s = self.ctl.settings
         self.title(_("M-Finder Options"))
