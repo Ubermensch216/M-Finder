@@ -5,4 +5,4 @@ database, advanced search syntax, a virtual-list GUI with rich document
 previews, and an HTTP search server.
 """
 
-__version__ = "0.1.0"
+__version__ = "1.0"
