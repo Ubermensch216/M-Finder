@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import font as tkfont
 from typing import TYPE_CHECKING
 
 from . import i18n, service, theme, winshell
@@ -41,6 +42,117 @@ def center_on(dlg: tk.Toplevel, parent) -> None:
     y = max(0, min(y, dlg.winfo_screenheight() - h))
     dlg.geometry(f"+{x}+{y}")
     dlg.deiconify()
+
+
+class SyntaxHelpDialog(tk.Toplevel):
+    """Read-only reference of the search syntax: a heading per group, the term on the left, its meaning on the right."""
+
+    COL = 230  # x position of the description column
+
+    def __init__(self, parent) -> None:
+        super().__init__(parent)
+        self.withdraw()
+        self.title(_("Search syntax"))
+        self.transient(parent)
+        theme.apply_window(self)
+        try:
+            self.iconbitmap(parent.ctl.icon_path)
+        except (tk.TclError, AttributeError):
+            pass
+        c = COLORS
+        self.configure(bg=c["window"])
+        outer = ttk.Frame(self)
+        outer.pack(fill="both", expand=True, padx=8, pady=8)
+        bar = ttk.Scrollbar(outer, orient="vertical")
+        bar.pack(side="right", fill="y")
+        t = self.text = tk.Text(outer, width=78, height=30, wrap="word", bd=0, highlightthickness=1,
+                                highlightbackground=c["line"], highlightcolor=c["line"], bg=c["bg"], fg=c["fg"],
+                                padx=14, pady=10, cursor="arrow", spacing1=2, spacing3=2,
+                                selectbackground=c["sel"], selectforeground=c["fg"],
+                                inactiveselectbackground=c["sel_inactive"], yscrollcommand=bar.set)
+        t.pack(side="left", fill="both", expand=True)
+        bar.configure(command=t.yview)
+        base = tkfont.nametofont("TkDefaultFont").actual("family")
+        t.tag_configure("h", font=(base, 11, "bold"), foreground=c["accent"], spacing1=14, spacing3=4)
+        t.tag_configure("first", spacing1=0)
+        t.tag_configure("row", lmargin1=12, lmargin2=self.COL, tabs=(self.COL,))
+        t.tag_configure("code", font=("Consolas", 10), foreground=c["accent"])
+        t.tag_configure("desc", font=(base, 10), foreground=c["fg"])
+        t.tag_configure("note", font=(base, 9), foreground=c["dim"], lmargin1=12, lmargin2=12)
+        for i, (title, rows, note) in enumerate(self.sections()):
+            t.insert("end", title + "\n", ("h",) if i else ("h", "first"))
+            for code, desc in rows:
+                t.insert("end", code, ("row", "code"))
+                t.insert("end", "\t" + desc + "\n", ("row", "desc"))
+            if note:
+                t.insert("end", note + "\n", ("note",))
+        t.configure(state="disabled")
+        btn = ttk.Frame(self)
+        btn.pack(fill="x", padx=8, pady=(0, 8))
+        ok = ttk.Button(btn, text=_("OK"), command=self.destroy)
+        ok.pack(side="right")
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.bind("<Return>", lambda e: self.destroy())
+        ok.focus_set()
+        center_on(self, parent)
+
+    @staticmethod
+    def sections():
+        return [
+            (_("Basics"), [
+                ("a b", _("both a AND b")),
+                ("a | b", _("a OR b")),
+                ("!a", _("NOT a")),
+                ("< a | b > c", _("grouping")),
+                ('"a b"', _("exact phrase")),
+                ("*  ?", _("wildcards (match the whole name)")),
+                ("c:\\dir\\x", _("a backslash matches the full path")),
+            ], ""),
+            (_("Modifiers (affect the terms that follow)"), [
+                ("case:  nocase:", _("match case / ignore case")),
+                ("regex:  noregex:", _("regular expression on / off")),
+                ("wholeword:  ww:", _("whole word")),
+                ("path:  nopath:", _("match the full path / the name only")),
+                ("wfn:", _("whole file name")),
+            ], ""),
+            (_("Functions"), [
+                ("file:  folder:", _("files only / folders only")),
+                ("ext:jpg;png", _("extensions")),
+                ("empty:", _("empty folders")),
+                ("attrib:H", _("attributes")),
+                ("depth:<3", _("folder depth")),
+                ("len:>20", _("name length")),
+                ("parent:C:\\Windows", _("direct children of a folder")),
+                ("infolder:C:\\Windows", _("direct children of a folder")),
+                ("content:" + _("text"), _("file contents")),
+            ], ""),
+            (_("Size"), [
+                ("size:>10mb", _("larger than 10 MB")),
+                ("size:1kb..1mb", _("between 1 KB and 1 MB")),
+                ("size:large", _("also: tiny, small, medium, huge, gigantic, empty")),
+            ], ""),
+            (_("Date"), [
+                ("dm:today  dm:thisweek", _("modified today / this week")),
+                ("dm:2024-05", _("modified in May 2024")),
+                ("dm:>2024-01-01", _("modified after Jan 1, 2024")),
+                ("dm:last3days", _("modified in the last 3 days")),
+            ], _("dc: created date, da: accessed date")),
+            (_("Macros"), [
+                ("audio:  video:  pic:", _("media files")),
+                ("doc:  zip:  exe:", _("documents, archives, programs")),
+            ], ""),
+            (_("Shortcuts"), [
+                ("Ctrl+I", _("case sensitive")),
+                ("Ctrl+B", _("whole word")),
+                ("Ctrl+U", _("match path")),
+                ("Ctrl+R", _("regular expression")),
+                ("Ctrl+P", _("options")),
+                ("F5", _("rebuild the index")),
+                ("Ctrl+N", _("new window")),
+                ("Ctrl+D", _("bookmark")),
+                ("Ctrl+Shift+C", _("copy the full path")),
+            ], ""),
+        ]
 
 
 class _ListOrganizer(tk.Toplevel):

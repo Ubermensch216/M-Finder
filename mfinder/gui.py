@@ -15,33 +15,13 @@ from . import __version__, filelist, i18n, query, theme, winshell
 from .engine import Engine, is_admin
 from .etp import EtpService
 from .fmt import format_size, format_time, split_ext
-from .gui_dialogs import OptionsDialog, ask_text, organize_bookmarks, organize_filters
+from .gui_dialogs import OptionsDialog, SyntaxHelpDialog, ask_text, organize_bookmarks, organize_filters
 from .httpserver import HttpService
 from .i18n import _
 from .index import FILE_ATTRIBUTE_DIRECTORY
 from .preview_pane import PreviewPane
 from .settings import Settings, app_dir
 from .theme import COLORS
-
-
-def syntax_help() -> str:
-    return _(
-        "Search syntax\n\n"
-        "  a b          both a AND b            a | b      a OR b\n"
-        "  !a           NOT a                   < a | b > c    grouping\n"
-        "  \"a b\"        exact phrase            * ?        wildcards (match whole name)\n"
-        "  c:\\dir\\x     a backslash matches the full path\n\n"
-        "Modifiers (affect the terms that follow):\n"
-        "  case:  nocase:  regex:  noregex:  wholeword:  ww:  path:  nopath:  wfn:\n\n"
-        "Functions:\n"
-        "  file:  folder:  ext:jpg;png  empty:  attrib:H  depth:<3  len:>20\n"
-        "  parent:C:\\Windows  infolder:C:\\Windows  content:text  (file contents)\n"
-        "  size:>10mb  size:1kb..1mb  size:large|tiny|small|medium|huge|gigantic|empty\n"
-        "  dm:today  dm:thisweek  dm:2024-05  dm:>2024-01-01  dm:last3days   (dc: created, da: accessed)\n"
-        "Macros:  audio:  video:  pic:  doc:  zip:  exe:\n\n"
-        "Shortcuts: Ctrl+I case, Ctrl+B whole word, Ctrl+U path, Ctrl+R regex, Ctrl+P options,\n"
-        "F5 rebuild, Ctrl+N new window, Ctrl+D bookmark, Ctrl+Shift+C copy full path."
-    )
 
 
 class VirtualList(tk.Frame):
@@ -1084,7 +1064,7 @@ class SearchWindow(tk.Toplevel):
             t.add_command(label=_("Restart as Administrator"), command=ctl.restart_as_admin)
 
         h = add_menu(_("Help"))
-        h.add_command(label=_("Search Syntax"), command=lambda: messagebox.showinfo(_("Search syntax"), syntax_help(), parent=self))
+        h.add_command(label=_("Search Syntax"), command=lambda: SyntaxHelpDialog(self))
         h.add_command(label=_("About M-Finder"), command=self.about)
 
         if theme.current != "dark":
