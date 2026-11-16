@@ -29,6 +29,8 @@ HEAVY = [
     "sympy", "cv2", "torch", "tensorflow", "uharfbuzz", "pytest", "jedi", "docutils", "sphinx",
     "fontTools", "brotli", "zopfli", "ssl", "_ssl", "asyncio", "_asyncio", "_overlapped",
     "multiprocessing", "_multiprocessing", "sqlite3", "_sqlite3", "xmlrpc",
+    # pymupdf 2.x ships an optional ML layout analyser (~45 MB of ONNX models); M-Finder only renders pages / extracts text.
+    "pymupdf.layout", "pymupdf4llm", "onnxruntime", "networkx", "psutil", "yaml", "tabulate", "flatbuffers", "google",
 ]
 
 BUILD = os.path.join(ROOT, "build")
@@ -90,6 +92,7 @@ a = Analysis(
 )
 
 _DROP_DATA_PREFIXES = (
+    'pymupdf/layout/',
     '_tcl_data/tzdata/',
     '_tcl_data/msgs/',
     '_tk_data/msgs/',
