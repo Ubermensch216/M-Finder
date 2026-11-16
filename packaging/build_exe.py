@@ -1,18 +1,17 @@
 """Build distributable executables with PyInstaller.
 
-    python packaging/build_exe.py            # onefile + onedir
+    python packaging/build_exe.py            # onefile (dist/M-Finder.exe only)
     python packaging/build_exe.py --onefile  # only dist/M-Finder.exe
     python packaging/build_exe.py --onedir   # only dist/M-Finder/ (+ zip)
 
-Output: dist/M-Finder.exe (single file, portable), dist/M-Finder/ (folder; use this one
-for the Windows service, which must live under Program Files) and dist/M-Finder-<ver>.zip.
+Output: dist/M-Finder.exe (single file, portable). Pass --onedir to also build
+dist/M-Finder/ and dist/M-Finder-<ver>.zip for folder deployment.
 Requires:  pip install pyinstaller
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
 import shutil
 import struct
@@ -85,20 +84,12 @@ def run_pyinstaller(mode: str, icon: str, version: str) -> None:
     subprocess.run(cmd, check=True, cwd=ROOT)
 
 
-def sha256(path: str) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--onefile", action="store_true")
     ap.add_argument("--onedir", action="store_true")
     args = ap.parse_args()
-    modes = [m for m, on in (("onefile", args.onefile), ("onedir", args.onedir)) if on] or ["onefile", "onedir"]
+    modes = [m for m, on in (("onefile", args.onefile), ("onedir", args.onedir)) if on] or ["onefile"]
     os.makedirs(BUILD, exist_ok=True)
     icon, version = os.path.join(BUILD, "mfinder.ico"), os.path.join(BUILD, "version_info.txt")
     write_icon(icon)
@@ -106,23 +97,29 @@ def main() -> int:
     # onedir first: both write dist/M-Finder*, onefile creates the file, onedir the folder
     for mode in sorted(modes, reverse=True):
         run_pyinstaller(mode, icon, version)
-    lines = []
+    outputs = []
     exe = os.path.join(DIST, "M-Finder.exe")
     folder = os.path.join(DIST, "M-Finder")
+    zpath = os.path.join(DIST, f"M-Finder-{__version__}.zip")
+    sums = os.path.join(DIST, "SHA256SUMS.txt")
+    if os.path.isfile(sums):
+        os.remove(sums)
+    if "onedir" not in modes:
+        if os.path.isdir(folder):
+            shutil.rmtree(folder)
+        if os.path.isfile(zpath):
+            os.remove(zpath)
     if "onedir" in modes:
-        zpath = os.path.join(DIST, f"M-Finder-{__version__}.zip")
         with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
             for dp, _, fns in os.walk(folder):
                 for fn in fns:
                     full = os.path.join(dp, fn)
                     z.write(full, os.path.join("M-Finder", os.path.relpath(full, folder)))
-        lines.append((zpath, sha256(zpath)))
+        outputs.append(zpath)
     if "onefile" in modes and os.path.isfile(exe):
-        lines.append((exe, sha256(exe)))
-    with open(os.path.join(DIST, "SHA256SUMS.txt"), "w", encoding="utf-8") as f:
-        for path, digest in lines:
-            f.write(f"{digest}  {os.path.basename(path)}\n")
-            print(f"{os.path.getsize(path) / 1e6:7.1f} MB  {digest}  {path}")
+        outputs.append(exe)
+    for path in outputs:
+        print(f"{os.path.getsize(path) / 1e6:7.1f} MB  {path}")
     return 0
 
 

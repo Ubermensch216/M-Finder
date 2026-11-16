@@ -412,6 +412,24 @@ class UiSupportTests(unittest.TestCase):
     def test_themes_and_hotkeys(self):
         self.assertIn(theme.resolve("system"), ("light", "dark"))
         self.assertEqual(theme.resolve("bogus"), "light")
+        import tkinter as tk
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            theme.apply(root, "dark")
+            bar = theme.MenuBar(root)
+            m = bar.add_menu("File")
+            m.add_command(label="Open")
+            btn, menu = bar.menus[0]
+            self.assertEqual(bar.cget("bg"), theme.PALETTES["dark"]["window"])
+            self.assertEqual(btn.cget("bg"), theme.PALETTES["dark"]["window"])
+            self.assertEqual(btn.cget("fg"), theme.PALETTES["dark"]["fg"])
+            self.assertEqual(btn.cget("activebackground"), theme.PALETTES["dark"]["sel"])
+            self.assertIs(menu, m)
+        finally:
+            theme.apply(root, "light")
+            root.destroy()
         self.assertEqual(tray.parse_hotkey("Ctrl+Shift+F12"), (6, 0x7B))
         self.assertIsNone(tray.parse_hotkey("f12"))  # a bare key would hijack typing
         self.assertIsNone(tray.parse_hotkey("ctrl+"))
@@ -436,6 +454,12 @@ class UiSupportTests(unittest.TestCase):
                 self.assertEqual(t.bookmarks, s.bookmarks)
                 self.assertIsNotNone(t.find_filter("Mine"))
                 self.assertIsNone(t.find_filter("nope"))
+                t.filters[0]["name"] = "Everything"
+                t.current_filter = "Everything"
+                t.save()
+                migrated = Settings.load()
+                self.assertEqual(migrated.current_filter, "All")
+                self.assertEqual(migrated.filters[0]["name"], "All")
             finally:
                 if old is None:
                     del os.environ["APPDATA"]

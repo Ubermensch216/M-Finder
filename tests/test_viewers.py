@@ -81,6 +81,29 @@ class HwpxTests(Samples):
         self.assertEqual(t.rows[0][0].bg, "#fff2cc")
         self.assertEqual(len(images(d)), 1)
 
+    def test_strikeout_shapes(self):
+        import zipfile
+        header = '''<hh:head xmlns:hh="h"><hh:refList><hh:charProperties>
+<hh:charPr id="0" height="1000"><hh:strikeout shape="3D" color="#000000"/></hh:charPr>
+<hh:charPr id="1" height="1000"><hh:strikeout type="NONE" shape="SOLID" color="#000000"/></hh:charPr>
+<hh:charPr id="2" height="1000"><hh:strikeout shape="SOLID" color="#000000"/></hh:charPr>
+<hh:charPr id="3" height="1000"><hh:strikeout shape="DASH" color="#000000"/></hh:charPr>
+</hh:charProperties></hh:refList></hh:head>'''
+        sec = '''<hs:sec xmlns:hs="s" xmlns:hp="p"><hp:p>
+<hp:run charPrIDRef="0"><hp:t>plain3d</hp:t></hp:run>
+<hp:run charPrIDRef="1"><hp:t>noneType</hp:t></hp:run>
+<hp:run charPrIDRef="2"><hp:t>solid</hp:t></hp:run>
+<hp:run charPrIDRef="3"><hp:t>dash</hp:t></hp:run>
+</hp:p></hs:sec>'''
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "strike.hwpx")
+            with zipfile.ZipFile(p, "w") as z:
+                z.writestr("Contents/header.xml", header)
+                z.writestr("Contents/section0.xml", sec)
+            runs = paras(hwpx.read(p))[0].runs
+            self.assertEqual([(r.text, r.strike) for r in runs],
+                             [("plain3d", False), ("noneType", False), ("solid", True), ("dash", True)])
+
 
 class HwpTests(Samples):
     def test_docinfo_styles_table_picture(self):

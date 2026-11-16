@@ -158,8 +158,10 @@ class Engine:
     def cancel_build(self) -> None:
         self._cancel.set()
 
-    def save(self) -> None:
+    def save(self, only_if_dirty: bool = False) -> None:
         with self._save_lock:
+            if only_if_dirty and self.index.rev == self._last_save_rev:
+                return
             try:
                 self.index.save(self.settings.database_file)
                 self._last_save_rev = self.index.rev
@@ -181,6 +183,8 @@ class Engine:
     def _fill_worker(self, index: Index, cancel: threading.Event) -> None:
         self.filling = True
         try:
+            changed = False
+            start_rev = index.rev
             for vol, r in enumerate(index.roots):
                 if r["kind"] != "ntfs" or cancel.is_set():
                     continue
@@ -191,7 +195,8 @@ class Engine:
                 except OSError:
                     continue
                 try:
-                    mftparse.fill_metadata(index, vol, cancel, access=access)
+                    if mftparse.fill_metadata(index, vol, cancel, access=access):
+                        changed = True
                 except (OSError, mftparse.MftError):
                     pass
                 finally:
@@ -200,12 +205,17 @@ class Engine:
                 return
             left = [i for i in range(len(index)) if index.alive[i] and index.mtime[i] == 0.0 and index.roots[index.vol[i]]["kind"] != "filelist"]
             if left and len(left) <= 200000:  # records the $MFT parser skipped (extension records)
-                index.ensure_meta(left, cancel)
-            if self.settings.folder_sizes and not cancel.is_set():
-                index.compute_folder_sizes(cancel)
-            index.touch()
-            if index is self.index and not cancel.is_set():
-                self.save()
+                if index.ensure_meta(left, cancel):
+                    changed = True
+            if self.settings.folder_sizes and not cancel.is_set() and (
+                not index.folder_sizes_ready or index.folder_sizes_rev != index.rev
+            ):
+                if index.compute_folder_sizes(cancel):
+                    changed = True
+            if not cancel.is_set() and (changed or index.rev != start_rev):
+                index.touch()
+                if index is self.index:
+                    self.save()
         finally:
             self.filling = False
 
@@ -217,7 +227,7 @@ class Engine:
             if self.building or self.filling:
                 continue
             if self.settings.folder_sizes and idx.folder_sizes_rev != idx.rev:
-                idx.compute_folder_sizes()
+                idx.compute_folder_sizes(self._bg_stop)
             if time.time() - last_save > 600 and idx.rev != self._last_save_rev and len(idx):
                 self.save()
                 last_save = time.time()
@@ -256,7 +266,7 @@ class Engine:
         self._bg_stop.set()
         self.stop_monitors()
         if len(self.index):
-            self.save()
+            self.save(only_if_dirty=True)
 
     # ---- searching -------------------------------------------------------
 

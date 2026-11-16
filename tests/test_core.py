@@ -152,6 +152,24 @@ class IndexTests(unittest.TestCase):
             ids = query.search(back, "cat2")
             self.assertTrue(back.full_path(ids[0]).endswith(os.path.join("Pics", "sub", "cat2.jpg")))
 
+    def test_dense_compaction(self):
+        with tempfile.TemporaryDirectory() as d:
+            idx = Index()
+            _, r = idx.add_root("C:\\", "ntfs")
+            dir_id = idx.add("folder", r, 0x10)
+            for i in range(9000):
+                idx.add(f"f_{i:04d}.txt", dir_id, 0x20, size=i)
+            for i in range(2, 9002, 2):
+                idx.remove(i)
+            db = os.path.join(d, "dense.db")
+            idx.save(db)
+            back = Index.load(db)
+            self.assertEqual(back.live_count(), idx.live_count())
+            self.assertEqual(len(back), idx.live_count())
+            hit = query.search(back, "f_0001.txt")
+            self.assertEqual(len(hit), 1)
+            self.assertEqual(back.full_path(hit[0]), "C:\\folder\\f_0001.txt")
+
     def test_corrupt_and_missing_database(self):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(DatabaseError):
@@ -265,6 +283,26 @@ class EngineAndHttpTests(unittest.TestCase):
                 srv.shutdown()
                 srv.server_close()
 
+    def test_shutdown_skips_clean_save(self):
+        with tempfile.TemporaryDirectory() as d:
+            tree = os.path.join(d, "tree")
+            make_tree(tree)
+            s = Settings()
+            s.roots, s.use_mft, s.db_path, s.monitor, s.folder_sizes = [tree], False, os.path.join(d, "db.db"), False, False
+            e = Engine(s)
+            self.assertTrue(e.rebuild())
+            e.shutdown()
+            e2 = Engine(s)
+            self.assertTrue(e2.load())
+            calls = []
+            orig_save = e2.index.save
+            e2.index.save = lambda p: (calls.append(p), orig_save(p))
+            e2.shutdown()
+            self.assertEqual(calls, [])
+            e2.index.touch()
+            e2.shutdown()
+            self.assertEqual(calls, [s.db_path])
+
 
 @unittest.skipUnless(sys.platform == "win32" and os.environ.get("MF_GUI_TEST"), "set MF_GUI_TEST=1 to run the Tk smoke test")
 class GuiSmoke(unittest.TestCase):
@@ -288,6 +326,9 @@ class GuiSmoke(unittest.TestCase):
             ctl = Controller(s)
             try:
                 app = ctl.windows[0]
+                self.assertEqual(app.cget("menu"), "")
+                self.assertEqual(app._menubar.cget("bg"), ctl.windows[0].cget("bg"))
+                self.assertEqual(len(app._menubar.menus), 7)
                 self.assertTrue(self.pump(ctl, lambda: len(app.list.ids) > 10))
                 app.var.set("cat")
                 self.assertTrue(self.pump(ctl, lambda: len(app.list.ids) == 2))
@@ -370,7 +411,7 @@ class GuiSmoke(unittest.TestCase):
                 self.assertIs(w2.engine, app.engine)
                 self.assertEqual(len(ctl.windows), 2)
                 # errors surface in the status line
-                app.cb_filter.set("Everything")
+                app.cb_filter.set("All")
                 app.cb_filter.event_generate("<<ComboboxSelected>>")
                 app.v_regex.set(True)
                 app.apply_flags()

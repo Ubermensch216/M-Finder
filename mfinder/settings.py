@@ -18,7 +18,7 @@ def default_filters() -> list[dict]:
         return {"name": name, "search": search, "case": False, "ww": False, "path": False, "regex": False}
 
     return [
-        f("Everything"), f("Audio", "audio:"), f("Compressed", "zip:"), f("Document", "doc:"),
+        f("All"), f("Audio", "audio:"), f("Compressed", "zip:"), f("Document", "doc:"),
         f("Executable", "exe:"), f("Folder", "folder:"), f("Picture", "pic:"), f("Video", "video:"),
     ]
 
@@ -50,7 +50,7 @@ class Settings:
     rhwp_path: str = ""  # rhwp executable for exact HWP/HWPX preview ("" = look next to the app / in %APPDATA%\M-Finder\rhwp)
     rhwp_webfonts: bool = False  # let rhwp download missing fonts (public CDN); off = installed/cached fonts only
     filters: list[dict] = field(default_factory=default_filters)
-    current_filter: str = "Everything"
+    current_filter: str = "All"
     bookmarks: list[dict] = field(default_factory=list)  # {name, search, filter, case, ww, path, regex, sort, asc}
     # view
     theme: str = "system"  # system | light | dark
@@ -106,6 +106,11 @@ class Settings:
         for k, v in data.items():
             if k in known:
                 setattr(s, k, v)
+        for flt in s.filters:
+            if flt.get("name") == "Everything" and not flt.get("search"):
+                flt["name"] = "All"
+        if s.current_filter == "Everything":
+            s.current_filter = "All"
         return s
 
     def save(self) -> None:

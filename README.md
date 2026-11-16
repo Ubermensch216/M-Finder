@@ -62,9 +62,8 @@ Windows only lets administrators open a raw volume. Options:
 
 | File | Use |
 |---|---|
-| `M-Finder.exe` | single portable file (~12 MB), no Python needed. Unpacks to a temp folder at start (~1–2 s). |
-| `M-Finder/` + `M-Finder-0.1.0.zip` | folder build: faster start; the one to install under `C:\Program Files\M-Finder` if you want the service. |
-| `SHA256SUMS.txt` | checksums |
+| `M-Finder.exe` | single portable file (~13 MB), no Python needed. Unpacks to a temp folder at start (~1–2 s). |
+| `M-Finder/` + `M-Finder-0.1.0.zip` | optional folder build (`--onedir`): faster start; useful under `C:\Program Files\M-Finder` for the service. |
 
 The exe is a windowed program: double-click for the GUI; from a terminal the CLI works the same
 (`M-Finder.exe search "ext:pdf"`, `M-Finder.exe service status`) and prints to that terminal.

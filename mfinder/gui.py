@@ -572,7 +572,7 @@ class SearchWindow(tk.Toplevel):
 
     def refresh_filters(self) -> None:
         s = self.ctl.settings
-        names = [f["name"] for f in s.filters] or ["Everything"]
+        names = [f["name"] for f in s.filters] or ["All"]
         self.cb_filter.configure(values=[_(n) if n in DEFAULT_FILTER_NAMES else n for n in names])
         self._filter_names = names
         cur = s.current_filter if s.current_filter in names else names[0]
@@ -809,8 +809,21 @@ class SearchWindow(tk.Toplevel):
 
     def _build_menu(self) -> None:
         ctl = self.ctl
-        mb = tk.Menu(self)
-        f = tk.Menu(mb, tearoff=0)
+        if theme.current == "dark":
+            bar = theme.MenuBar(self)
+            bar.pack(fill="x")
+            self._menubar = bar
+            add_menu = bar.add_menu
+        else:
+            native_mb = tk.Menu(self)
+            self._menubar = native_mb
+
+            def add_menu(label: str) -> tk.Menu:
+                m = tk.Menu(native_mb, tearoff=0)
+                native_mb.add_cascade(label=label, menu=m)
+                return m
+
+        f = add_menu(_("File"))
         f.add_command(label=_("New Search Window"), command=ctl.new_window, accelerator="Ctrl+N")
         f.add_command(label=_("Open File List..."), command=self.open_filelist)
         f.add_separator()
@@ -821,9 +834,8 @@ class SearchWindow(tk.Toplevel):
         f.add_separator()
         f.add_command(label=_("Close"), command=self.on_close, accelerator="Ctrl+W")
         f.add_command(label=_("Exit"), command=ctl.quit)
-        mb.add_cascade(label=_("File"), menu=f)
 
-        e = tk.Menu(mb, tearoff=0)
+        e = add_menu(_("Edit"))
         e.add_command(label=_("Copy Full Path"), command=self.copy_full_path, accelerator="Ctrl+Shift+C")
         e.add_command(label=_("Copy Name"), command=self.copy_name)
         e.add_command(label=_("Copy Path"), command=self.copy_parent_path)
@@ -832,9 +844,8 @@ class SearchWindow(tk.Toplevel):
         e.add_command(label=_("Invert Selection"), command=lambda: self.list.invert_selection())
         e.add_separator()
         e.add_command(label=_("Delete (Recycle Bin)"), command=self.delete_selected, accelerator="Del")
-        mb.add_cascade(label=_("Edit"), menu=e)
 
-        v = tk.Menu(mb, tearoff=0)
+        v = add_menu(_("View"))
         v.add_checkbutton(label=_("Status Bar"), variable=self.v_status, command=self.toggle_status)
         pm = tk.Menu(v, tearoff=0)
         pm.add_checkbutton(label=_("Show Preview Pane"), variable=self.v_preview, command=self.toggle_preview, accelerator="F4")
@@ -854,9 +865,8 @@ class SearchWindow(tk.Toplevel):
         sm.add_command(label=_("Ascending"), command=lambda: self.set_sort(self.ctl.settings.sort_key, True))
         sm.add_command(label=_("Descending"), command=lambda: self.set_sort(self.ctl.settings.sort_key, False))
         v.add_cascade(label=_("Sort By"), menu=sm)
-        mb.add_cascade(label=_("View"), menu=v)
 
-        s = tk.Menu(mb, tearoff=0)
+        s = add_menu(_("Search"))
         s.add_checkbutton(label=_("Match Case"), variable=self.v_case, command=self.apply_flags, accelerator="Ctrl+I")
         s.add_checkbutton(label=_("Match Whole Word"), variable=self.v_ww, command=self.apply_flags, accelerator="Ctrl+B")
         s.add_checkbutton(label=_("Match Path"), variable=self.v_path, command=self.apply_flags, accelerator="Ctrl+U")
@@ -864,12 +874,10 @@ class SearchWindow(tk.Toplevel):
         s.add_separator()
         s.add_command(label=_("Add to Filters..."), command=self.add_filter)
         s.add_command(label=_("Organize Filters..."), command=lambda: organize_filters(self))
-        mb.add_cascade(label=_("Search"), menu=s)
 
-        self.bookmark_menu = tk.Menu(mb, tearoff=0)
-        mb.add_cascade(label=_("Bookmarks"), menu=self.bookmark_menu)
+        self.bookmark_menu = add_menu(_("Bookmarks"))
 
-        t = tk.Menu(mb, tearoff=0)
+        t = add_menu(_("Tools"))
         t.add_command(label=_("Options..."), command=self.options, accelerator="Ctrl+P")
         t.add_command(label=_("Rebuild Index"), command=ctl.rebuild, accelerator="F5")
         t.add_command(label=_("Compute Folder Sizes Now"), command=ctl.compute_folder_sizes)
@@ -879,13 +887,13 @@ class SearchWindow(tk.Toplevel):
         if not is_admin() and os.name == "nt":
             t.add_separator()
             t.add_command(label=_("Restart as Administrator"), command=ctl.restart_as_admin)
-        mb.add_cascade(label=_("Tools"), menu=t)
 
-        h = tk.Menu(mb, tearoff=0)
+        h = add_menu(_("Help"))
         h.add_command(label=_("Search Syntax"), command=lambda: messagebox.showinfo(_("Search syntax"), syntax_help(), parent=self))
         h.add_command(label=_("About M-Finder"), command=self.about)
-        mb.add_cascade(label=_("Help"), menu=h)
-        self.config(menu=mb)
+
+        if theme.current != "dark":
+            self.config(menu=native_mb)
 
     def _focus_entry(self) -> None:
         self.entry.focus_set()
@@ -916,8 +924,8 @@ class SearchWindow(tk.Toplevel):
     def about(self) -> None:
         messagebox.showinfo(
             _("About M-Finder"),
-            f"M-Finder {__version__}\n\n" + _("An Everything-style instant file name search.") + "\n"
-            + _("NTFS MFT indexing, USN journal live updates, Everything search syntax."),
+            f"M-Finder {__version__}\n\n" + _("Fast instant file and folder search for Windows.") + "\n"
+            + _("NTFS MFT indexing, USN journal live updates, and file content search."),
             parent=self,
         )
 
@@ -929,7 +937,7 @@ class SearchWindow(tk.Toplevel):
         self.ctl.close_window(self)
 
 
-DEFAULT_FILTER_NAMES = {"Everything", "Audio", "Compressed", "Document", "Executable", "Folder", "Picture", "Video"}
+DEFAULT_FILTER_NAMES = {"All", "Audio", "Compressed", "Document", "Executable", "Folder", "Picture", "Video"}
 
 
 class Controller:
@@ -1106,6 +1114,16 @@ class Controller:
         s = self.settings
         if self.windows:
             s.geometry = self.windows[-1].geometry()
+        for w in self.windows:
+            w.cancel.set()
+            try:
+                w.withdraw()
+            except tk.TclError:
+                pass
+        try:
+            self.root.update_idletasks()
+        except tk.TclError:
+            pass
         try:
             s.save()
         except OSError:
@@ -1116,8 +1134,6 @@ class Controller:
             self.ipc.stop()
         self.http.stop()
         self.etp.stop()
-        for w in self.windows:
-            w.cancel.set()
         self.engine.shutdown()
         self.root.destroy()
 

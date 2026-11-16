@@ -294,7 +294,7 @@ class EtpService:
     def start(self) -> None:
         s = self.engine.settings
         self.server = EtpServer(self.engine, s.etp_bind, s.etp_port, s.etp_user, s.etp_password)
-        threading.Thread(target=self.server.serve_forever, daemon=True, name="etp").start()
+        threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.1}, daemon=True, name="etp").start()
 
     def stop(self) -> None:
         if self.server:

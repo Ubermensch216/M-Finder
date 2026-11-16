@@ -13,6 +13,21 @@ MAX_BLOCKS = 4000
 MAX_IMAGE = 8 << 20
 ALIGN = {"JUSTIFY": "justify", "LEFT": "left", "RIGHT": "right", "CENTER": "center",
          "DISTRIBUTE": "justify", "DISTRIBUTE_SPACE": "justify"}
+STRIKE_SHAPES = frozenset({
+    "SOLID", "DOT", "DASH", "DASH_DOT", "DASH_DOT_DOT", "LONG_DASH",
+    "CIRCLE", "DOUBLE_SLIM", "SLIM_THICK", "THICK_SLIM", "SLIM_THICK_SLIM",
+    "WAVE", "DOUBLE_WAVE",
+})
+
+
+def _is_strikeout(s) -> bool:
+    if s is None:
+        return False
+    stype = (s.get("type") or "").upper()
+    if stype == "NONE":
+        return False
+    sshape = (s.get("shape") or "").upper()
+    return sshape in STRIKE_SHAPES if sshape else bool(stype)
 
 
 class _Header:
@@ -35,7 +50,7 @@ class _Header:
             u = C.child(cp, "underline")
             d["underline"] = u is not None and (u.get("type") or "NONE").upper() != "NONE"
             s = C.child(cp, "strikeout")
-            d["strike"] = s is not None and (s.get("shape") or "NONE").upper() != "NONE"
+            d["strike"] = _is_strikeout(s)
             d["sup"] = 1 if C.child(cp, "supscript") is not None else (-1 if C.child(cp, "subscript") is not None else 0)
             fr = C.child(cp, "fontRef")
             if fr is not None:

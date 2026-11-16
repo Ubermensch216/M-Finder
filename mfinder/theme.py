@@ -125,3 +125,31 @@ def apply(root: tk.Misc, name: str) -> str:
         except tk.TclError:
             pass
     return current
+
+
+class MenuBar(tk.Frame):
+    """Themed horizontal menu bar for dark mode, where the native Win32 menu bar stays white."""
+
+    def __init__(self, master: tk.Misc) -> None:
+        c = COLORS
+        super().__init__(master, bg=c["window"], bd=0, highlightthickness=0)
+        self._row = tk.Frame(self, bg=c["window"], bd=0, highlightthickness=0)
+        self._row.pack(fill="x")
+        tk.Frame(self, bg=c["line"], height=1, bd=0, highlightthickness=0).pack(fill="x")
+        self.menus: list[tuple[tk.Menubutton, tk.Menu]] = []
+
+    def add_menu(self, label: str) -> tk.Menu:
+        c = COLORS
+        btn = tk.Menubutton(
+            self._row, text=label, direction="below", indicatoron=False,
+            bd=0, relief="flat", highlightthickness=0, takefocus=0,
+            padx=8, pady=3, font="TkMenuFont",
+            bg=c["window"], fg=c["fg"],
+            activebackground=c["sel"], activeforeground=c["fg"],
+            disabledforeground=c["dim"],
+        )
+        m = tk.Menu(btn, tearoff=0)
+        btn.configure(menu=m)
+        btn.pack(side="left")
+        self.menus.append((btn, m))
+        return m

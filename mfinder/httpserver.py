@@ -153,7 +153,7 @@ class HttpService:
     def start(self) -> None:
         s = self.engine.settings
         self.server = make_server(self.engine, s.http_bind, s.http_port, s.http_user, s.http_password)
-        threading.Thread(target=self.server.serve_forever, daemon=True, name="http").start()
+        threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.1}, daemon=True, name="http").start()
 
     def stop(self) -> None:
         if self.server is not None:

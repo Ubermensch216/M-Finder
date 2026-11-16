@@ -8,6 +8,7 @@ import struct
 import threading
 import zlib
 from array import array
+from itertools import compress
 from typing import Callable, Iterable, Optional
 
 FILE_ATTRIBUTE_DIRECTORY = 0x10
@@ -314,26 +315,65 @@ class Index:
 
     # ---- persistence ---------------------------------------------------
 
+    def _compact_locked(self) -> tuple[list[str], array, list[array], list[dict]]:
+        n = len(self.names)
+        alive = self.alive
+        dead_count = alive.count(0)
+        if dead_count == 0:
+            cols = [self.attrs, self.size, self.mtime, self.ctime, self.atime, self.frn, self.vol]
+            return self.names, self.parent, cols, [dict(r) for r in self.roots]
+        col_specs = (("I", self.attrs), ("q", self.size), ("d", self.mtime), ("d", self.ctime),
+                     ("d", self.atime), ("Q", self.frn), ("H", self.vol))
+        remap = array("i", [-1]) * n
+        # Sparse deletions (typical live session): copy contiguous byte spans instead of per-element Python loops.
+        if dead_count <= 4096:
+            spans = []
+            prev = 0
+            pos = 0
+            while True:
+                d = alive.find(0, pos)
+                if d < 0:
+                    break
+                if prev < d:
+                    spans.append((prev, d))
+                prev = d + 1
+                pos = prev
+            if prev < n:
+                spans.append((prev, n))
+            names: list[str] = []
+            new_pos = 0
+            for a, b in spans:
+                names.extend(self.names[a:b])
+                remap[a:b] = array("i", range(new_pos, new_pos + b - a))
+                new_pos += b - a
+            mv_p = memoryview(self.parent).cast("B")
+            raw_parent = array("i")
+            raw_parent.frombytes(b"".join(mv_p[a * 4 : b * 4] for a, b in spans))
+            parent = array("i", (remap[p] if p >= 0 else -1 for p in raw_parent))
+            cols = []
+            for code, arr in col_specs:
+                item = arr.itemsize
+                mv = memoryview(arr).cast("B")
+                out = array(code)
+                out.frombytes(b"".join(mv[a * item : b * item] for a, b in spans))
+                cols.append(out)
+        else:
+            new_pos = 0
+            for i, ok in enumerate(alive):
+                if ok:
+                    remap[i] = new_pos
+                    new_pos += 1
+            names = list(compress(self.names, alive))
+            parent = array("i", (remap[p] if p >= 0 else -1 for p in compress(self.parent, alive)))
+            cols = [array(code, compress(arr, alive)) for code, arr in col_specs]
+        roots = [dict(r, root_id=remap[r["root_id"]]) for r in self.roots]
+        return names, parent, cols, roots
+
     def save(self, path: str) -> None:
         if array("i").itemsize != 4 or array("I").itemsize != 4:
             raise DatabaseError("unsupported platform array widths")
         with self.lock:
-            n = len(self.names)
-            if self.alive.count(0):
-                keep = [i for i in range(n) if self.alive[i]]
-                remap = array("i", [-1]) * n
-                for new, old in enumerate(keep):
-                    remap[old] = new
-                names = [self.names[i] for i in keep]
-                parent = array("i", (remap[self.parent[i]] if self.parent[i] >= 0 else -1 for i in keep))
-                cols = [array(code, (arr[i] for i in keep)) for code, arr in (
-                    ("I", self.attrs), ("q", self.size), ("d", self.mtime), ("d", self.ctime),
-                    ("d", self.atime), ("Q", self.frn), ("H", self.vol))]
-                roots = [dict(r, root_id=remap[r["root_id"]]) for r in self.roots]
-            else:
-                names, parent = self.names, self.parent
-                cols = [self.attrs, self.size, self.mtime, self.ctime, self.atime, self.frn, self.vol]
-                roots = [dict(r) for r in self.roots]
+            names, parent, cols, roots = self._compact_locked()
             count = len(names)
             name_blob = "\0".join(names).encode("utf-8", "surrogatepass")
             body = b"".join(
@@ -403,6 +443,8 @@ class Index:
             idx.alive = bytearray(b"\x01") * count
             idx.roots = meta["roots"]
             idx.folder_sizes_ready = bool(meta.get("folder_sizes"))
+            if idx.folder_sizes_ready:
+                idx.folder_sizes_rev = idx.rev
             idx.extra = meta.get("extra") or {}
         except (ValueError, KeyError, struct.error, zlib.error) as e:
             raise DatabaseError("Database is corrupt") from e
