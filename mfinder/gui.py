@@ -565,9 +565,9 @@ class SearchWindow(tk.Toplevel):
 
         self.var.trace_add("write", lambda *_a: self.schedule_search())
         self.entry.bind("<Down>", lambda e: self._focus_list())
-        self.entry.bind("<Escape>", lambda e: self.var.set(""))
         self.entry.bind("<Return>", lambda e: self._focus_list())
         for seq, fn in (
+            ("<Escape>", ctl.quit),
             ("<Control-i>", lambda: self._toggle(self.v_case)),
             ("<Control-b>", lambda: self._toggle(self.v_ww)),
             ("<Control-u>", lambda: self._toggle(self.v_path)),
@@ -1009,7 +1009,7 @@ class SearchWindow(tk.Toplevel):
         f.add_command(label=_("Export..."), command=self.export)
         f.add_separator()
         f.add_command(label=_("Close"), command=self.on_close, accelerator="Ctrl+W")
-        f.add_command(label=_("Exit"), command=ctl.quit)
+        f.add_command(label=_("Exit"), command=ctl.quit, accelerator="Esc")
 
         e = add_menu(_("Edit"))
         e.add_command(label=_("Copy Full Path"), command=self.copy_full_path, accelerator="Ctrl+Shift+C")
@@ -1308,6 +1308,10 @@ class Controller:
             s.geometry = last.geometry()
         for w in self.windows:
             w.cancel.set()
+            try:
+                w.preview.clear()
+            except Exception:
+                pass
             try:
                 w.withdraw()
             except tk.TclError:

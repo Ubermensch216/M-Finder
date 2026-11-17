@@ -422,6 +422,10 @@ class GuiSmoke(unittest.TestCase):
                 app.var.set("^(")
                 self.assertTrue(self.pump(ctl, lambda: bool(app.error)))
                 self.assertIn("정규", app.lbl_left.cget("text") or "정규") if False else None
+                app.entry.focus_force()
+                app.entry.event_generate("<Escape>")
+                ctl.root.update_idletasks()
+                self.assertTrue(ctl._quitting)
             finally:
                 ctl.quit()
 
