@@ -1,0 +1,4 @@
+[package]
+name = "ureq"
+version = "3.3.0"
+edition = "2021"

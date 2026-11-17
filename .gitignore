@@ -6,6 +6,7 @@ __pycache__/
 # Distribution / packaging
 build/
 dist/
+packaging/rhwp_preview/target/
 *.egg-info/
 .installed.cfg
 *.egg

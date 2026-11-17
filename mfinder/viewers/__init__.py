@@ -40,7 +40,7 @@ def _text(path: str, label: str = "") -> Loaded:
     return Loaded("text", (pv.text, pv.truncated), label or pv.kind)
 
 
-def load(path: str, html_mode: str = "page") -> Loaded:
+def load(path: str, html_mode: str = "page", rhwp_job: Any = None) -> Loaded:
     """Parse ``path`` for display. Never raises."""
     from . import docx, html as html_viewer, hwp, hwpx, image, markdown, rhwp, xlsx
 
@@ -64,10 +64,12 @@ def load(path: str, html_mode: str = "page") -> Loaded:
             return _text(path, label)
         if ext in (".html", ".htm") and html_mode == "code":
             return _text(path, label)
-        if ext in rhwp.EXTS:  # exact page rendering by the rhwp CLI, when installed
-            doc = rhwp.open_doc(path)
+        if ext in rhwp.EXTS and HAVE_PDF:  # exact page rendering by rhwp + PyMuPDF
+            doc = rhwp.open_doc(path, job=rhwp_job)
             if doc is not None:
                 return Loaded("hwppages", doc, label)
+            if rhwp_job is not None and rhwp_job.cancelled:
+                return Loaded(error="cancelled", label=label)
         try:
             if ext == ".docx":
                 return Loaded("rich", docx.read(path), label)

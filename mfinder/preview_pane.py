@@ -32,6 +32,7 @@ class PreviewPane(tk.Frame):
         self.active = None
         self.views: dict = {}
         self.loading = False
+        self._load_job = None
         self.html_mode = "page"  # "page" | "code"
         self._html_hover = ""
 
@@ -147,6 +148,9 @@ class PreviewPane(tk.Frame):
 
     def clear(self, msg: str = "") -> None:
         self.seq += 1
+        if self._load_job is not None:
+            self._load_job.cancel()
+            self._load_job = None
         self.path = ""
         self.html_mode_bar.pack_forget()
         self.lbl.configure(text="")
@@ -158,6 +162,9 @@ class PreviewPane(tk.Frame):
             return
         self.seq += 1
         seq = self.seq
+        if self._load_job is not None:
+            self._load_job.cancel()
+        job = self._load_job = rhwp_viewer.Job()
         self.path = path
         if os.path.splitext(path)[1].lower() in (".html", ".htm"):
             self.html_mode_bar.pack(side="right", before=self._right_anchor, padx=(4, 2), pady=1)
@@ -171,7 +178,7 @@ class PreviewPane(tk.Frame):
         mode = self.html_mode
 
         def work() -> None:
-            self.q.put((seq, path, viewers.load(path, html_mode=mode)))
+            self.q.put((seq, path, viewers.load(path, html_mode=mode, rhwp_job=job)))
 
         threading.Thread(target=work, daemon=True).start()
         if not self.loading:
@@ -186,6 +193,11 @@ class PreviewPane(tk.Frame):
                     self.loading = False
                     self._display(path, loaded)
                     return
+                if loaded.kind == "hwppages" and loaded.model is not None:
+                    try:
+                        loaded.model.close()
+                    except Exception:
+                        pass
         except queue.Empty:
             pass
         self.after(40, self._poll)

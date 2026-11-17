@@ -295,6 +295,82 @@ class RhwpTests(Samples):
         code, _ = job.run([sys.executable, "-c", "import time; time.sleep(30)"], dict(os.environ), self.tmp.name, 30)
         self.assertEqual(code, -1)
 
+    @unittest.skipUnless(viewers.HAVE_PDF, "PyMuPDF not installed")
+    def test_bundled_rhwp_renders_hwpx_pages(self):
+        import zipfile
+        import pymupdf
+
+        rhwp.configure(path="", enabled=True)
+        exe = rhwp.find_exe()
+        if not exe:
+            self.skipTest("bundled rhwp.exe not built")
+        container = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<ocf:container xmlns:ocf="urn:oasis:names:tc:opendocument:xmlns:container">'
+            '<ocf:rootfiles><ocf:rootfile full-path="Contents/content.hpf" media-type="application/hwpml-package+xml"/>'
+            '</ocf:rootfiles></ocf:container>'
+        )
+        hpf = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<opf:package xmlns:opf="http://www.idpf.org/2007/opf/" version="" unique-identifier="" id="">'
+            '<opf:metadata><opf:title>fixture</opf:title><opf:language>ko</opf:language></opf:metadata>'
+            '<opf:manifest><opf:item id="header" href="Contents/header.xml" media-type="application/xml"/>'
+            '<opf:item id="section0" href="Contents/section0.xml" media-type="application/xml"/></opf:manifest>'
+            '<opf:spine><opf:itemref idref="header"/><opf:itemref idref="section0"/></opf:spine></opf:package>'
+        )
+        header = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head" version="1.4" secCnt="1">'
+            '<hh:refList>'
+            '<hh:fontfaces itemCnt="1"><hh:fontface lang="HANGUL" fontCnt="1">'
+            '<hh:font id="0" face="맑은 고딕" type="TTF" isEmbedded="0"/></hh:fontface></hh:fontfaces>'
+            '<hh:charProperties itemCnt="1"><hh:charPr id="0" height="1200" textColor="#000000" shadeColor="none">'
+            '<hh:fontRef hangul="0"/></hh:charPr></hh:charProperties>'
+            '<hh:paraProperties itemCnt="1"><hh:paraPr id="0"><hh:align horizontal="LEFT"/></hh:paraPr></hh:paraProperties>'
+            '</hh:refList></hh:head>'
+        )
+        sec = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" '
+            'xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">'
+            '<hp:p paraPrIDRef="0" pageBreak="0"><hp:run charPrIDRef="0">'
+            '<hp:secPr><hp:pagePr width="59528" height="84188"><hp:margin left="8504" right="8504" top="5669" bottom="4252" header="4252" footer="4252"/></hp:pagePr></hp:secPr>'
+            '<hp:t>사업 계획서 1페이지</hp:t></hp:run></hp:p>'
+            '<hp:p paraPrIDRef="0" pageBreak="1"><hp:run charPrIDRef="0"><hp:t>둘째 페이지 본문</hp:t></hp:run></hp:p>'
+            '</hs:sec>'
+        )
+        old_appdata = os.environ.get("APPDATA")
+        with tempfile.TemporaryDirectory() as appdir:
+            os.environ["APPDATA"] = appdir
+            try:
+                path = os.path.join(appdir, "valid.hwpx")
+                with zipfile.ZipFile(path, "w") as z:
+                    z.writestr("mimetype", "application/hwp+zip", compress_type=zipfile.ZIP_STORED)
+                    z.writestr("META-INF/container.xml", container)
+                    z.writestr("Contents/content.hpf", hpf)
+                    z.writestr("Contents/header.xml", header)
+                    z.writestr("Contents/section0.xml", sec)
+                ld = viewers.load(path)
+                self.assertEqual(ld.kind, "hwppages")
+                doc = ld.model
+                try:
+                    self.assertTrue(doc.is_worker)
+                    self.assertEqual(doc.pages, 2)
+                    self.assertTrue(doc.has(0))
+                    with pymupdf.open(doc.page_file(0)) as pdf0:
+                        self.assertIn("사업계획서1페이지", pdf0[0].get_text().replace(" ", ""))
+                    self.assertTrue(doc.render(1, rhwp.Job()))
+                    self.assertTrue(doc.has(1))
+                    with pymupdf.open(doc.page_file(1)) as pdf1:
+                        self.assertIn("둘째페이지본문", pdf1[0].get_text().replace(" ", ""))
+                finally:
+                    doc.close()
+            finally:
+                if old_appdata is None:
+                    os.environ.pop("APPDATA", None)
+                else:
+                    os.environ["APPDATA"] = old_appdata
+
 
 class ContentSearchTests(Samples):
     def test_content_search_covers_every_format(self):

@@ -120,6 +120,14 @@ class Job:
         self._procs: set = set()
         self._lock = threading.Lock()
 
+    def track(self, proc) -> None:
+        with self._lock:
+            self._procs.add(proc)
+
+    def untrack(self, proc) -> None:
+        with self._lock:
+            self._procs.discard(proc)
+
     def cancel(self) -> None:
         self.cancelled = True
         with self._lock:
@@ -131,13 +139,14 @@ class Job:
 
     def run(self, cmd: list, env: dict, cwd: str, timeout: float) -> tuple[int, str]:
         """-> (exit code, stdout). Code -1: cancelled, -2: timeout / could not start."""
+        if self.cancelled:
+            return -1, ""
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
                                     env=env, cwd=cwd, creationflags=_popen_flags())
         except OSError:
             return -2, ""
-        with self._lock:
-            self._procs.add(proc)
+        self.track(proc)
         t0 = time.monotonic()
         box: list = []
         try:
@@ -155,8 +164,7 @@ class Job:
             proc.wait(5)
             return proc.returncode, out.decode("utf-8", "replace")
         finally:
-            with self._lock:
-                self._procs.discard(proc)
+            self.untrack(proc)
             try:
                 if proc.poll() is None:
                     proc.kill()
@@ -177,13 +185,113 @@ def _drain(proc, box: list) -> None:
         box.append(b"")
 
 
+def _readline(stream, box: list) -> None:
+    try:
+        box.append(stream.readline())
+    except (OSError, ValueError):
+        box.append(b"")
+
+
+class _Worker:
+    """Persistent ``rhwp --worker`` session keeping one parsed document in memory."""
+
+    def __init__(self, exe: str, env: dict, cwd: str) -> None:
+        self.proc = subprocess.Popen(
+            [exe, "--worker"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=env,
+            cwd=cwd,
+            creationflags=_popen_flags(),
+        )
+        self.lock = threading.Lock()
+        self.dead = False
+
+    def request(self, payload: dict, job: Job, timeout: float) -> dict | None:
+        with self.lock:
+            if self.dead or job.cancelled or self.proc.poll() is not None:
+                return None
+            job.track(self.proc)
+            box: list[bytes] = []
+            try:
+                assert self.proc.stdin is not None and self.proc.stdout is not None
+                line = (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+                self.proc.stdin.write(line)
+                self.proc.stdin.flush()
+                t = threading.Thread(target=_readline, args=(self.proc.stdout, box), daemon=True)
+                t.start()
+                t0 = time.monotonic()
+                while t.is_alive():
+                    t.join(0.1)
+                    if job.cancelled or time.monotonic() - t0 > timeout:
+                        self.kill()
+                        return None
+                raw = box[0] if box else b""
+                if not raw:
+                    self.kill()
+                    return None
+                return json.loads(raw.decode("utf-8", "replace"))
+            except (OSError, ValueError):
+                self.kill()
+                return None
+            finally:
+                job.untrack(self.proc)
+
+    def kill(self) -> None:
+        self.dead = True
+        try:
+            if self.proc.poll() is None:
+                self.proc.kill()
+        except OSError:
+            pass
+        for stream in (self.proc.stdin, self.proc.stdout):
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+        try:
+            self.proc.wait(2)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+    def close(self) -> None:
+        with self.lock:
+            if self.dead:
+                return
+            self.dead = True
+            try:
+                if self.proc.poll() is None and self.proc.stdin is not None:
+                    self.proc.stdin.write(b'{"op":"quit"}\n')
+                    self.proc.stdin.flush()
+                    self.proc.wait(1.5)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            self.kill()
+
+
 class RhwpDoc:
     """A document rendered page by page: ``page_file(i)`` exists once page ``i`` has been rendered."""
 
-    def __init__(self, path: str, exe: str, webfonts: bool, directory: str, pages: int) -> None:
+    def __init__(self, path: str, exe: str, webfonts: bool, directory: str, pages: int,
+                 worker: _Worker | None = None) -> None:
         self.path, self.exe, self.webfonts = path, exe, webfonts
         self.dir = directory
         self.pages = pages
+        self._worker = worker
+
+    @property
+    def is_worker(self) -> bool:
+        return self._worker is not None and not self._worker.dead
+
+    def close(self) -> None:
+        w, self._worker = self._worker, None
+        if w is not None:
+            w.close()
+
+    def __del__(self) -> None:
+        self.close()
 
     def page_file(self, i: int) -> str:
         return os.path.join(self.dir, f"p{i}.pdf")
@@ -194,10 +302,19 @@ class RhwpDoc:
     def render(self, i: int, job: Job, timeout: float = PAGE_TIMEOUT) -> bool:
         if self.has(i):
             return True
+        if job.cancelled:
+            return False
         part = os.path.join(self.dir, f"p{i}.part-{os.getpid()}-{threading.get_ident()}.pdf")
-        code, _out = job.run([self.exe, "export-pdf", self.path, "-p", str(i), "-o", part], _env(self.webfonts),
-                             self.dir, timeout)
-        ok = code == 0 and os.path.isfile(part) and os.path.getsize(part) > 100
+        ok = False
+        w = self._worker
+        if w is not None and not w.dead:
+            res = w.request({"op": "page", "page": i, "out": part}, job, timeout)
+            if isinstance(res, dict):
+                ok = bool(res.get("ok")) and os.path.isfile(part) and os.path.getsize(part) > 100
+        if not ok and not job.cancelled and (w is None or w.dead):
+            code, _out = job.run([self.exe, "export-pdf", self.path, "-p", str(i), "-o", part], _env(self.webfonts),
+                                 self.dir, timeout)
+            ok = code == 0 and os.path.isfile(part) and os.path.getsize(part) > 100
         try:
             if ok:
                 os.replace(part, self.page_file(i))
@@ -224,6 +341,8 @@ def open_doc(path: str, job: Job | None = None) -> RhwpDoc | None:
     except OSError:
         return None
     job = job or Job()
+    if job.cancelled:
+        return None
     meta = os.path.join(d, "meta.json")
     pages = 0
     try:
@@ -234,8 +353,46 @@ def open_doc(path: str, job: Job | None = None) -> RhwpDoc | None:
     doc = RhwpDoc(path, exe, webfonts, d, pages)
     if pages and doc.has(0):
         return doc
-    part = os.path.join(d, f"p0.part-{os.getpid()}.pdf")
-    code, out = job.run([exe, "export-pdf", path, "-p", "0", "--json", "-o", part], _env(webfonts), d, FIRST_PAGE_TIMEOUT)
+    part = os.path.join(d, f"p0.part-{os.getpid()}-{threading.get_ident()}.pdf")
+    env = _env(webfonts)
+
+    # Prefer persistent worker mode (parses the document once across all pages).
+    worker: _Worker | None = None
+    try:
+        worker = _Worker(exe, env, d)
+    except OSError:
+        worker = None
+    if worker is not None:
+        res = worker.request({"op": "open", "path": path}, job, FIRST_PAGE_TIMEOUT)
+        if isinstance(res, dict):
+            if not res.get("ok"):
+                worker.close()
+                return None
+            pages = int(res.get("pages") or 0)
+            if pages < 1:
+                worker.close()
+                return None
+            pres = worker.request({"op": "page", "page": 0, "out": part}, job, FIRST_PAGE_TIMEOUT)
+            if not (isinstance(pres, dict) and pres.get("ok") and os.path.isfile(part) and os.path.getsize(part) > 100):
+                _discard(part)
+                worker.close()
+                return None
+            try:
+                os.replace(part, doc.page_file(0))
+                with open(meta, "w", encoding="utf-8") as fh:
+                    json.dump({"pages": pages, "source": os.path.basename(path)}, fh)
+            except OSError:
+                worker.close()
+                return None
+            doc.pages = pages
+            doc._worker = worker
+            _prune_cache(key)
+            return doc
+        worker.close()
+    if job.cancelled:
+        return None
+
+    code, out = job.run([exe, "export-pdf", path, "-p", "0", "--json", "-o", part], env, d, FIRST_PAGE_TIMEOUT)
     if code != 0 or not os.path.isfile(part) or os.path.getsize(part) < 100:
         _discard(part)
         return None

@@ -1386,13 +1386,19 @@ class RhwpView(PdfView):
         self.canvas.xview_moveto(0)
         self._schedule()
         self.info = f"{model.pages}p"
-        for _ in range(self.WORKERS):
+        n_workers = 1 if getattr(model, "is_worker", False) else self.WORKERS
+        for _ in range(n_workers):
             threading.Thread(target=self._worker, args=(self.job,), daemon=True).start()
         self._pump()
 
     def clear(self) -> None:
         if self.job is not None:
             self.job.cancel()
+        if self.rdoc is not None:
+            try:
+                self.rdoc.close()
+            except Exception:
+                pass
         self.wake.set()
         if self.pump_job is not None:
             try:

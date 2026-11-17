@@ -74,13 +74,20 @@ def write_version_file(path: str) -> None:
 def write_spec(spec_path: str, mode: str, icon: str, version: str) -> None:
     entry = os.path.join(ROOT, "packaging", "entry.py")
     locales = os.path.join(ROOT, "mfinder", "locales")
+    rhwp_exe = os.path.join(ROOT, "vendor", "rhwp", "rhwp.exe")
+    if not os.path.isfile(rhwp_exe):
+        built = os.path.join(ROOT, "packaging", "rhwp_preview", "target", "release", "rhwp-preview.exe")
+        if os.path.isfile(built):
+            os.makedirs(os.path.dirname(rhwp_exe), exist_ok=True)
+            shutil.copy2(built, rhwp_exe)
+    binaries = [(rhwp_exe, "vendor/rhwp")] if os.path.isfile(rhwp_exe) else []
     excludes = ["unittest", "pydoc", "setuptools", "pip", "test"] + HEAVY
     keep_enc = {"ascii.enc", "utf-8.enc", "iso8859-1.enc", "cp949.enc", "cp1252.enc", "unicode.enc"}
     spec = f"""# -*- mode: python ; coding: utf-8 -*-
 a = Analysis(
     [{entry!r}],
     pathex=[{ROOT!r}],
-    binaries=[],
+    binaries={binaries!r},
     datas=[({locales!r}, 'mfinder/locales')],
     hiddenimports=[],
     hookspath=[],
